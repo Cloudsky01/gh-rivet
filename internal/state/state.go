@@ -6,7 +6,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"rivet/internal/config"
+	"github.com/Cloudsky01/gh-rivet/internal/config"
 )
 
 // ViewState represents the current view in the TUI

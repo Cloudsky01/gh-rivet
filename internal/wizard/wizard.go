@@ -7,7 +7,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 
-	"rivet/internal/config"
+	"github.com/Cloudsky01/gh-rivet/internal/config"
 )
 
 // GroupBuilder holds the state for building a group

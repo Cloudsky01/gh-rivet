@@ -8,7 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/lipgloss"
 
-	"rivet/internal/config"
+	"github.com/Cloudsky01/gh-rivet/internal/config"
 )
 
 type listItem struct {

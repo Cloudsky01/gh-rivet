@@ -8,10 +8,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"rivet/internal/config"
-	"rivet/internal/github"
-	"rivet/internal/tui"
-	"rivet/internal/wizard"
+	"github.com/Cloudsky01/gh-rivet/internal/config"
+	"github.com/Cloudsky01/gh-rivet/internal/github"
+	"github.com/Cloudsky01/gh-rivet/internal/tui"
+	"github.com/Cloudsky01/gh-rivet/internal/wizard"
 )
 
 var repoFormatRegex = regexp.MustCompile(`^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$`)

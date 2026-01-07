@@ -9,10 +9,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"rivet/internal/config"
-	"rivet/internal/github"
-	"rivet/internal/state"
-	"rivet/pkg/models"
+	"github.com/Cloudsky01/gh-rivet/internal/config"
+	"github.com/Cloudsky01/gh-rivet/internal/github"
+	"github.com/Cloudsky01/gh-rivet/internal/state"
+	"github.com/Cloudsky01/gh-rivet/pkg/models"
 )
 
 type viewState int

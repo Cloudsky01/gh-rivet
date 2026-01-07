@@ -6,7 +6,7 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/lipgloss"
 
-	"rivet/pkg/models"
+	"github.com/Cloudsky01/gh-rivet/pkg/models"
 )
 
 func buildWorkflowRunsTable(runs []models.GHRun) table.Model {

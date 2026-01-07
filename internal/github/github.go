@@ -10,7 +10,7 @@ import (
 	"sort"
 	"time"
 
-	"rivet/pkg/models"
+	"github.com/Cloudsky01/gh-rivet/pkg/models"
 )
 
 const DefaultTimeout = 30 * time.Second
