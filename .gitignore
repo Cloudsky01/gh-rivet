@@ -1,5 +1,4 @@
 # Binaries
-rivet
 *.exe
 *.dll
 *.so
@@ -28,12 +27,10 @@ go.work
 .DS_Store
 Thumbs.db
 
-# Rivet state files (user-specific navigation state)
-*.state.yaml
-.rivet.state.yaml
-
 # Added by goreleaser init:
 dist/
 
+# Rivet state files (user-specific navigation state)
+*.state.yaml
+.rivet.state.yaml
 CLAUDE.md
-.rivet.*
