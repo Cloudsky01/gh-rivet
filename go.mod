@@ -1,4 +1,4 @@
-module rivet
+module github.com/Cloudsky01/gh-rivet
 
 go 1.24.0
 
