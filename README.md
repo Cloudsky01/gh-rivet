@@ -33,12 +33,12 @@ If you work in a repository with dozens of workflows, the default GitHub UI and 
 
 ### Go Install
 ```bash
-go install github.com/Cloudsky01/rivet/cmd/rivet@latest
+go install github.com/Cloudsky01/gh-rivet/cmd/rivet@latest
 ```
 
 ### From Source
 ```bash
-git clone https://github.com/Cloudsky01/rivet
+git clone https://github.com/Cloudsky01/gh-rivet
 cd rivet
 make build
 ```
