@@ -39,3 +39,5 @@ bin/
 
 .claude/
 .cursor/
+
+.env

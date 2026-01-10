@@ -5,7 +5,8 @@ before:
     - go mod tidy
 
 builds:
-  - env:
+  - id: rivet
+    env:
       - CGO_ENABLED=0
     goos:
       - linux
@@ -18,7 +19,8 @@ builds:
     binary: rivet
 
 archives:
-  - format: tar.gz
+  - id: rivet
+    format: tar.gz
     name_template: >-
       {{ .ProjectName }}_
       {{- .Version }}_
@@ -43,17 +45,16 @@ changelog:
       - Merge pull request
       - Merge branch
 
-brews:
+homebrew_casks:
   - name: rivet
+    ids:
+      - rivet
+    binaries:
+      - rivet
     repository:
       owner: cloudsky01
-      name: homebrew-rivet
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Formula
+      name: homebrew-tap
+      token: "{{ .Env.GITHUB_TOKEN }}"
     homepage: https://github.com/cloudsky01/gh-rivet
     description: "Interactive TUI for browsing and managing GitHub Actions workflows"
     license: MIT
-    test: |
-      system "#{bin}/rivet --version"
-    install: |
-      bin.install "rivet"
