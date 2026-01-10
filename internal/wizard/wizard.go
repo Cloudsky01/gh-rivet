@@ -28,6 +28,17 @@ type Wizard struct {
 	repository         string
 }
 
+func getASCIIArt() string {
+	return `
+     _           _
+    (_)         | |
+ _ __ ___   _____| |_
+| '__| \ \ / / _ \ __|
+| |  | |\ V /  __/ |_|
+|_|  |_| \_/ \___|\__|
+`
+}
+
 func New(workflows []string, configPath string) *Wizard {
 	return &Wizard{
 		availableWorkflows: workflows,
@@ -72,6 +83,10 @@ func (w *Wizard) Run() (*config.Config, error) {
 }
 
 func (w *Wizard) printWelcome() {
+	fmt.Println()
+	asciiArt := getASCIIArt()
+	asciiStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("99"))
+	fmt.Println(asciiStyle.Render(asciiArt))
 	fmt.Println()
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99"))
 	subtitleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))

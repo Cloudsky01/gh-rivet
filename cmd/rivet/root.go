@@ -28,9 +28,6 @@ var (
 var (
 	configPath      string
 	repo            string
-	runID           int
-	limit           int
-	debug           bool
 	force           bool
 	startWithPinned bool
 	statePath       string
@@ -38,54 +35,58 @@ var (
 
 	rootCmd = &cobra.Command{
 		Use:   "rivet",
-		Short: "Interactive TUI for browsing GitHub Actions workflows",
-		Long: `Rivet is a TUI tool that helps you browse and manage GitHub Actions 
-workflows organized by configurable groups. It wraps the GitHub CLI (gh)
-to provide an interactive interface for viewing workflow runs.
+		Short: "Interactive TUI for GitHub Actions workflows",
+		Long: `Browse and manage GitHub Actions workflows organized by configurable groups.
+Wraps the GitHub CLI (gh) to provide an interactive terminal interface.
 
-Requirements:
-  - GitHub CLI (gh) must be installed and authenticated
-  - A .github/.rivet.yaml configuration file
-
-Get started:
-  rivet init              # Create a configuration file
-  rivet -r owner/repo     # Browse workflows for a repository`,
+Requirements: GitHub CLI (gh) installed and authenticated
+Get started:  rivet init`,
 		RunE:    runView,
 		Version: version,
 	}
 
 	initCmd = &cobra.Command{
 		Use:   "init",
-		Short: "Initialize a new configuration file",
-		Long: `Initialize a new .rivet.yaml configuration file by scanning your
-repository's .github/workflows directory. If the file already exists,
-use --force to overwrite it.`,
-		RunE: runInit,
+		Short: "Create a new configuration file",
+		Long:  `Create a .rivet.yaml config by scanning .github/workflows or fetching from GitHub.`,
+		RunE:  runInit,
 	}
 
 	updateRepoCmd = &cobra.Command{
 		Use:   "update-repo [owner/repo]",
-		Short: "Update the repository in your configuration",
-		Long: `Update the repository setting in your .rivet.yaml configuration file.
-You can provide the repository as an argument or it will be detected from .git/config.`,
-		RunE: runUpdateRepo,
-		Args: cobra.MaximumNArgs(1),
+		Short: "Update repository in config",
+		Long:  `Update the repository setting in .rivet.yaml. Auto-detects from .git/config if not specified.`,
+		RunE:  runUpdateRepo,
+		Args:  cobra.MaximumNArgs(1),
 	}
 )
 
 func init() {
 	rootCmd.Flags().StringVarP(&configPath, "config", "c", ".github/.rivet.yaml", "Path to configuration file")
-	rootCmd.Flags().StringVarP(&repo, "repo", "r", "", "Repository in OWNER/REPO format (defaults to current directory)")
-	rootCmd.Flags().IntVar(&runID, "run", 0, "Specific run ID to view (defaults to latest)")
-	rootCmd.Flags().IntVarP(&limit, "limit", "l", 10, "Number of recent workflow runs to fetch and aggregate")
-	rootCmd.Flags().BoolVarP(&debug, "debug", "d", false, "Enable debug mode to show job matching details")
-	rootCmd.Flags().BoolVarP(&startWithPinned, "pinned", "p", false, "Start with pinned workflows view")
-	rootCmd.Flags().StringVar(&statePath, "state", "", "Path to state file (default: .github/.rivet.state.yaml)")
-	rootCmd.Flags().BoolVar(&noState, "no-state", false, "Disable state persistence (don't save or restore navigation state)")
+	rootCmd.Flags().StringVarP(&repo, "repo", "r", "", "Repository (owner/repo format)")
+	rootCmd.Flags().BoolVarP(&startWithPinned, "pinned", "p", false, "Start with pinned workflows")
+	rootCmd.Flags().StringVar(&statePath, "state", "", "Path to state file")
+	rootCmd.Flags().BoolVar(&noState, "no-state", false, "Disable state persistence")
+
+	// Store original help functions before overriding
+	originalRootHelpFunc := rootCmd.HelpFunc()
+	originalInitHelpFunc := initCmd.HelpFunc()
+
+	rootCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		fmt.Println(asciiStyle.Render(getASCIIArt()))
+		fmt.Println()
+		originalRootHelpFunc(cmd, args)
+	})
+
+	initCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		fmt.Println(asciiStyle.Render(getASCIIArt()))
+		fmt.Println()
+		originalInitHelpFunc(cmd, args)
+	})
 
 	initCmd.Flags().StringVarP(&configPath, "config", "c", ".github/.rivet.yaml", "Path to configuration file")
-	initCmd.Flags().BoolVarP(&force, "force", "f", false, "Overwrite existing configuration file")
-	initCmd.Flags().StringVarP(&repo, "repo", "r", "", "Repository in OWNER/REPO format (if no local workflows exist)")
+	initCmd.Flags().BoolVarP(&force, "force", "f", false, "Overwrite existing config")
+	initCmd.Flags().StringVarP(&repo, "repo", "r", "", "Repository (owner/repo) to fetch workflows from")
 
 	updateRepoCmd.Flags().StringVarP(&configPath, "config", "c", ".github/.rivet.yaml", "Path to configuration file")
 
@@ -96,12 +97,12 @@ func init() {
 
 func checkGitHubCLI() error {
 	if _, err := exec.LookPath("gh"); err != nil {
-		return fmt.Errorf("GitHub CLI (gh) is not installed.\n\nInstall it from: https://cli.github.com/\n\nOn macOS:  brew install gh\nOn Linux:  See https://github.com/cli/cli/blob/trunk/docs/install_linux.md")
+		return fmt.Errorf("GitHub CLI not installed\nInstall: https://cli.github.com/ or 'brew install gh'")
 	}
 
 	cmd := exec.Command("gh", "auth", "status")
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("GitHub CLI is not authenticated.\n\nRun: gh auth login")
+		return fmt.Errorf("GitHub CLI not authenticated\nRun: gh auth login")
 	}
 
 	return nil

@@ -22,11 +22,11 @@ type spinnerModel struct {
 	done    bool
 	success bool
 	err     error
-	result  interface{}
+	result  any
 }
 
 type spinnerCompleteMsg struct {
-	result interface{}
+	result any
 	err    error
 }
 

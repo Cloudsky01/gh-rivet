@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="rivet.jpg" alt="Rivet" width="200"/>
+  <img src="static/rivet_logo.png" alt="Rivet" width="200"/>
 
   # Rivet
   
@@ -13,16 +13,9 @@
 
 ## What is this?
 
-If you work in a repository with dozens of workflows, the default GitHub UI and `gh run list` are messy. 
+A terminal UI for organizing GitHub Actions workflows into groups. Navigate workflows with vim keys, pin favorites, and avoid the messy default GitHub interface.
 
-**Rivet** wraps the [GitHub CLI (`gh`)](https://cli.github.com/) to provide a structured, hierarchical view of your actions. It lets you group workflows (e.g., by Team or Environment) and navigate them quickly without leaving your terminal.
-
-## Why use it?
-
-* **Organize the noise:** Turn a flat list of 50+ YAML files into structured folders.
-* **No new auth:** It uses your existing `gh` CLI credentials. No tokens to manage.
-* **Pinning:** Keep your most frequently used workflows at the top.
-* **Vim keys:** Navigate `j`/`k` without reaching for the mouse.
+Wraps the [GitHub CLI (`gh`)](https://cli.github.com/) — uses your existing auth, no tokens needed.
 
 ## Requirements
 
@@ -31,37 +24,43 @@ If you work in a repository with dozens of workflows, the default GitHub UI and 
 
 ## Installation
 
-### Go Install
 ```bash
 go install github.com/Cloudsky01/gh-rivet/cmd/rivet@latest
 ```
 
-### From Source
+Or build from source:
 ```bash
 git clone https://github.com/Cloudsky01/gh-rivet
 cd rivet
 make build
 ```
 
-## Usage
+## Quick Start
 
-### Initialize config
+**1. Initialize inside your repo:**
 ```bash
-# Run inside your repository
-rivet init
+cd your-repo
+rivet init  # Auto-detects repo, scans workflows, guides you through grouping
 ```
 
-### Run
+**2. Run:**
 ```bash
-rivet -r owner/repo
+rivet  # Uses repository from .rivet.yaml
+```
+
+**Update repo later:**
+```bash
+rivet update-repo owner/repo
 ```
 
 ## Configuration
 
-Rivet looks for a `.rivet.yaml` file in the directory where you run it. You should commit this file to your repository so your team shares the same structure.
+`rivet init` creates a `.rivet.yaml` file. Commit it to share the structure with your team.
 
-### Example .rivet.yaml:
+**Example:**
 ```yaml
+repository: owner/repo
+
 groups:
   # Simple grouping
   - id: ci
@@ -95,17 +94,14 @@ groups:
 
 ## FAQ
 
-### Does this require a GitHub Token?
+**Does this require a GitHub Token?**
+No. Uses your local `gh` CLI. If `gh run list` works, Rivet works.
 
-No. It shells out to your local `gh` executable. If you can run `gh run list` in your terminal, Rivet works.
+**Why is it slow?**
+Fetches live data from GitHub on demand. No aggressive caching = always fresh status.
 
-### Why is it slow?
-
-Rivet fetches data from GitHub on demand. It does not cache aggressively to ensure you see the latest run status. If the GitHub API is slow, the TUI will wait.
-
-### Does it work with GitHub Enterprise?
-
-Yes, as long as your `gh` CLI is authenticated against your Enterprise instance.
+**Works with GitHub Enterprise?**
+Yes, if your `gh` CLI is authenticated to your instance.
 
 ## License
 

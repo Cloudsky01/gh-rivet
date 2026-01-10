@@ -16,7 +16,19 @@ var (
 	infoStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	labelStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("212"))
 	dividerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	asciiStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("99"))
 )
+
+func getASCIIArt() string {
+	return `
+     _           _
+    (_)         | |
+ _ __ ___   _____| |_
+| '__| \ \ / / _ \ __|
+| |  | |\ V /  __/ |_|
+|_|  |_| \_/ \___|\__|
+`
+}
 
 func printSuccessSummary(configPath string, cfg *config.Config) {
 	divider := dividerStyle.Render("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
