@@ -25,7 +25,17 @@ func (m MenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.workflowRuns = msg.runs
 			m.table = buildWorkflowRunsTable(msg.runs, m.tablePageSize)
 		}
-		return m, nil
+		// Continue listening for refresh ticks
+		return m, m.getRefreshTickerCmd()
+	case refreshTickMsg:
+		// Auto-refresh timer fired - fetch workflow runs if not already loading
+		if m.selectedWorkflow != "" && !m.loading {
+			m.loading = true
+			cmds := []tea.Cmd{m.fetchWorkflowRunsCmd, m.getRefreshTickerCmd()}
+			return m, tea.Batch(cmds...)
+		}
+		// Continue listening for refresh ticks
+		return m, m.getRefreshTickerCmd()
 	}
 
 	return m.updateActiveComponent(msg)
@@ -67,6 +77,7 @@ func (m MenuModel) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "ctrl+c", "q":
+		m.stopRefreshTicker()
 		return m, tea.Quit
 
 	case "s":
@@ -87,6 +98,30 @@ func (m MenuModel) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.activePanel = NavigationPanel
 			}
 			return m.handleWindowResize(tea.WindowSizeMsg{Width: m.width, Height: m.height}), nil
+		}
+		return m, nil
+
+	case "ctrl+r":
+		// Manual refresh - fetch latest runs and restart the auto-refresh timer
+		if m.selectedWorkflow != "" && !m.loading {
+			m.loading = true
+			// Restart ticker if auto-refresh is enabled
+			if m.refreshInterval > 0 && m.autoRefreshEnabled {
+				m.startRefreshTicker()
+			}
+			return m, m.fetchWorkflowRunsCmd
+		}
+		return m, nil
+
+	case "ctrl+shift+r":
+		// Toggle auto-refresh
+		if m.refreshInterval > 0 {
+			m.autoRefreshEnabled = !m.autoRefreshEnabled
+			if m.autoRefreshEnabled {
+				m.startRefreshTicker()
+			} else {
+				m.stopRefreshTicker()
+			}
 		}
 		return m, nil
 
@@ -165,6 +200,7 @@ func (m MenuModel) updateSidebarPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.selectedGroup = selectedItem.group
 					m.loading = true
 					m.activePanel = DetailsPanel
+					m.startRefreshTicker()
 					m.saveState()
 					return m, m.fetchWorkflowRunsCmd
 				}
@@ -189,6 +225,7 @@ func (m MenuModel) updateSidebarPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selectedGroup = selectedItem.group
 			m.loading = true
 			m.activePanel = DetailsPanel
+			m.startRefreshTicker()
 			m.saveState()
 			return m, m.fetchWorkflowRunsCmd
 		}
@@ -306,6 +343,7 @@ func (m MenuModel) updateNavigationPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.selectedWorkflow = selectedItem.workflowName
 					m.loading = true
 					m.activePanel = DetailsPanel
+					m.startRefreshTicker()
 					m.saveState()
 					return m, m.fetchWorkflowRunsCmd
 				}
@@ -360,6 +398,7 @@ func (m MenuModel) updateNavigationPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selectedWorkflow = selectedItem.workflowName
 			m.loading = true
 			m.activePanel = DetailsPanel
+			m.startRefreshTicker()
 			m.saveState()
 			return m, m.fetchWorkflowRunsCmd
 		}
@@ -424,6 +463,7 @@ func (m MenuModel) updateDetailsPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.selectedWorkflow = ""
 		m.workflowRuns = nil
 		m.activePanel = NavigationPanel
+		m.stopRefreshTicker()
 		return m, nil
 	}
 

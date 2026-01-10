@@ -13,8 +13,9 @@ import (
 )
 
 type Config struct {
-	Repository string  `yaml:"repository"`
-	Groups     []Group `yaml:"groups,omitempty"`
+	Repository      string  `yaml:"repository"`
+	RefreshInterval int     `yaml:"refreshInterval,omitempty"` // in seconds, 0 = disabled
+	Groups          []Group `yaml:"groups,omitempty"`
 }
 
 type Workflow struct {

@@ -512,6 +512,34 @@ func (m MenuModel) renderBreadcrumb() string {
 		Render(breadcrumbText)
 }
 
+
+// renderStatusBar renders the refresh status bar
+func (m MenuModel) renderStatusBar() string {
+	if m.refreshInterval <= 0 {
+		// No status bar if refresh is not configured
+		return ""
+	}
+
+	// Determine refresh status and color
+	autoRefreshSymbol := "✗"
+	refreshColor := lipgloss.Color("red")
+	if m.autoRefreshEnabled {
+		autoRefreshSymbol = "✓"
+		refreshColor = lipgloss.Color("green")
+	}
+
+	statusContent := lipgloss.NewStyle().
+		Foreground(refreshColor).
+		Render(fmt.Sprintf("  %s Auto-refresh: %ds", autoRefreshSymbol, m.refreshInterval))
+
+	return lipgloss.NewStyle().
+		Width(m.width).
+		Background(lipgloss.Color("235")).
+		Foreground(lipgloss.Color("69")).
+		Padding(0, 1).
+		Render(statusContent)
+}
+
 // renderHelpBar renders the help bar with available keybindings
 func (m MenuModel) renderHelpBar() string {
 	var keys []string
@@ -535,6 +563,11 @@ func (m MenuModel) renderHelpBar() string {
 		}
 	case RunsPanel:
 		keys = append(keys, "[w]open run", "[esc]close")
+	}
+
+	// Add refresh shortcuts if a workflow is selected and refresh is configured
+	if m.selectedWorkflow != "" && m.refreshInterval > 0 {
+		keys = append(keys, "[Ctrl+R]refresh", "[Ctrl+Shift+R]toggle")
 	}
 
 	helpText := strings.Join(keys, " ")

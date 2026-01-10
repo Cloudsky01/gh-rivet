@@ -63,12 +63,14 @@ func (m MenuModel) renderMultiPanelLayout() string {
 
 	// Add breadcrumb and help bar
 	breadcrumb := m.renderBreadcrumb()
+	statusBar := m.renderStatusBar()
 	helpBar := m.renderHelpBar()
 
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
 		topRow,
 		breadcrumb,
+		statusBar,
 		helpBar,
 	)
 }

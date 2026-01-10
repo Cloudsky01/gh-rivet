@@ -25,13 +25,13 @@ var (
 )
 
 var (
-	configPath      string
-	repo            string
-	force           bool
-	startWithPinned bool
-	statePath       string
-	noState         bool
-	timeoutSeconds  int
+	configPath       string
+	repo             string
+	force            bool
+	statePath        string
+	noState          bool
+	timeoutSeconds   int
+	refreshInterval  int
 
 	rootCmd = &cobra.Command{
 		Use:   "rivet",
@@ -64,10 +64,10 @@ Get started:  rivet init`,
 func init() {
 	rootCmd.Flags().StringVarP(&configPath, "config", "c", ".github/.rivet.yaml", "Path to configuration file")
 	rootCmd.Flags().StringVarP(&repo, "repo", "r", "", "Repository (owner/repo format)")
-	rootCmd.Flags().BoolVarP(&startWithPinned, "pinned", "p", false, "Start with pinned workflows")
 	rootCmd.Flags().StringVar(&statePath, "state", "", "Path to state file")
 	rootCmd.Flags().BoolVar(&noState, "no-state", false, "Disable state persistence")
 	rootCmd.Flags().IntVar(&timeoutSeconds, "timeout", 30, "GitHub API timeout in seconds")
+	rootCmd.Flags().IntVar(&refreshInterval, "refresh-interval", 0, "Auto-refresh interval in seconds (0 = disabled, min 5)")
 
 	// Store original help functions before overriding
 	originalRootHelpFunc := rootCmd.HelpFunc()
@@ -143,10 +143,16 @@ func runView(cmd *cobra.Command, args []string) error {
 	timeout := time.Duration(timeoutSeconds) * time.Second
 	gh := github.NewClientWithTimeout(repo, timeout)
 
+	// Use CLI flag if provided, otherwise use config value
+	interval := refreshInterval
+	if interval == 0 && cfg.RefreshInterval > 0 {
+		interval = cfg.RefreshInterval
+	}
+
 	opts := tui.MenuOptions{
-		StartWithPinned: startWithPinned,
 		StatePath:       statePath,
 		NoRestoreState:  noState,
+		RefreshInterval: interval,
 	}
 
 	model := tui.NewMenuModel(cfg, configPath, gh, opts)

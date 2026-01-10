@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
@@ -18,6 +19,10 @@ import (
 type workflowRunsMsg struct {
 	runs []models.GHRun
 	err  error
+}
+
+type refreshTickMsg struct {
+	timestamp time.Time
 }
 
 type viewState int
@@ -56,12 +61,18 @@ type MenuModel struct {
 	navigationFilterActive  bool
 	navigationFilterInput   string
 	navigationFilteredIndex int
+
+	// Refresh timer fields
+	refreshInterval    int
+	refreshTicker      *time.Ticker
+	autoRefreshEnabled bool
 }
 
 type MenuOptions struct {
 	StartWithPinned bool
 	StatePath       string
 	NoRestoreState  bool
+	RefreshInterval int
 }
 
 func NewMenuModel(cfg *config.Config, configPath string, gh *github.Client, opts MenuOptions) MenuModel {
@@ -104,6 +115,8 @@ func NewMenuModel(cfg *config.Config, configPath string, gh *github.Client, opts
 		activePanel:   NavigationPanel, // Default to navigation panel
 		showRunsPanel: false,
 		tablePageSize: 10,
+		refreshInterval: opts.RefreshInterval,
+		autoRefreshEnabled: opts.RefreshInterval > 0,
 	}
 
 	if !opts.NoRestoreState {
@@ -219,5 +232,34 @@ func (m *MenuModel) saveState() {
 
 	if err := s.Save(m.statePath); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to save state: %v\n", err)
+	}
+}
+
+// startRefreshTicker starts the auto-refresh timer if enabled and interval is valid
+func (m *MenuModel) startRefreshTicker() {
+	if m.refreshInterval <= 0 || !m.autoRefreshEnabled {
+		return
+	}
+
+	m.stopRefreshTicker() // Stop any existing ticker
+	m.refreshTicker = time.NewTicker(time.Duration(m.refreshInterval) * time.Second)
+}
+
+// stopRefreshTicker stops the auto-refresh timer
+func (m *MenuModel) stopRefreshTicker() {
+	if m.refreshTicker != nil {
+		m.refreshTicker.Stop()
+		m.refreshTicker = nil
+	}
+}
+
+// getRefreshTickerCmd returns a command that waits for the next refresh tick
+func (m *MenuModel) getRefreshTickerCmd() tea.Cmd {
+	if m.refreshTicker == nil {
+		return nil
+	}
+
+	return func() tea.Msg {
+		return refreshTickMsg{timestamp: <-m.refreshTicker.C}
 	}
 }
