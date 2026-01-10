@@ -301,7 +301,7 @@ func (w *Wizard) promptRepository() error {
 				huh.NewInput().
 					Title("📦 GitHub Repository").
 					Description("Format: owner/repo").
-					Placeholder("e.g., maintainx/maintainx").
+					Placeholder("e.g., Cloudsky01/gh-rivet").
 					Validate(func(s string) error {
 						if strings.TrimSpace(s) == "" {
 							return fmt.Errorf("repository is required")
