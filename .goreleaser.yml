@@ -58,3 +58,7 @@ homebrew_casks:
     homepage: https://github.com/cloudsky01/gh-rivet
     description: "Interactive TUI for browsing and managing GitHub Actions workflows"
     license: MIT
+    commit_msg_template: "Brew cask update for {{ .ProjectName }} version {{ .Tag }}"
+    commit_author:
+      name: Cloudsky01
+      email: apoellhuber99@gmail.com
