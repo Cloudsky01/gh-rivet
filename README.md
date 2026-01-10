@@ -1,12 +1,18 @@
 <div align="center">
-  <img src="static/rivet_logo.png" alt="Rivet" width="200"/>
-
+  
+  <img src="static/rivet_logo.png" alt="Rivet" width="180"/>
+  
   # Rivet
   
   **A TUI for organizing and managing GitHub Actions workflows.**
-
+  
   [![Go Version](https://img.shields.io/badge/go-1.21+-blue.svg)](https://go.dev)
   [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+  
+  ---
+  
+  <img src="static/demo.gif" alt="Demo" width="700">
+  
 </div>
 
 ---

@@ -33,6 +33,7 @@ dist/
 # Rivet state files
 *.state.yaml
 .rivet.state.yaml
+.rivet.yaml
 
 bin/
 
