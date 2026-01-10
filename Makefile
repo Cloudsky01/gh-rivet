@@ -26,13 +26,13 @@ help:
 # Build the application
 build:
 	@echo "Building $(BINARY_NAME) $(VERSION)..."
-	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(CMD_DIR)
-	@echo "Build complete: $(BUILD_DIR)/$(BINARY_NAME)"
+	go build $(LDFLAGS) -o $(BUILD_DIR)/bin/$(BINARY_NAME) $(CMD_DIR)
+	@echo "Build complete: $(BUILD_DIR)/bin/$(BINARY_NAME)"
 
 # Clean build artifacts
 clean:
 	@echo "Cleaning..."
-	rm -f $(BUILD_DIR)/$(BINARY_NAME)
+	rm -f $(BUILD_DIR)/bin/$(BINARY_NAME)
 	go clean
 	@echo "Clean complete"
 
@@ -69,4 +69,4 @@ install:
 # Build and run
 run: build
 	@echo "Running $(BINARY_NAME)..."
-	./$(BINARY_NAME)
+	./bin/$(BINARY_NAME)
