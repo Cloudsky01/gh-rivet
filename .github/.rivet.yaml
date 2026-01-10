@@ -1,0 +1,25 @@
+# Rivet Configuration
+# Learn more: https://github.com/Cloudsky01/gh-rivet
+#
+# Configuration structure:
+# - repository: GitHub repository in owner/repo format
+# - groups: Organize your workflows into groups
+#   - id: Unique identifier (auto-generated from name)
+#   - name: Display name shown in the TUI
+#   - description: Optional description
+#   - workflows: List of workflow filenames
+#   - pinnedWorkflows: Workflows to pin to the top
+#   - groups: Nested groups for hierarchical organization
+#
+# Run 'rivet --help' for more information
+
+repository: Cloudsky01/gh-rivet
+groups:
+    - id: workflows
+      name: Workflows
+      description: All workflows
+      workflows:
+        - ci.yml
+        - release.yml
+      pinnedWorkflows:
+        - ci.yml

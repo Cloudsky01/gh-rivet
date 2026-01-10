@@ -13,7 +13,8 @@ import (
 )
 
 type Config struct {
-	Groups []Group `yaml:"groups,omitempty"`
+	Repository string  `yaml:"repository"`
+	Groups     []Group `yaml:"groups,omitempty"`
 }
 
 type Workflow struct {
@@ -114,7 +115,26 @@ func (c *Config) Save(path string) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	// Add helpful header comment
+	header := `# Rivet Configuration
+# Learn more: https://github.com/Cloudsky01/gh-rivet
+#
+# Configuration structure:
+# - repository: GitHub repository in owner/repo format
+# - groups: Organize your workflows into groups
+#   - id: Unique identifier (auto-generated from name)
+#   - name: Display name shown in the TUI
+#   - description: Optional description
+#   - workflows: List of workflow filenames
+#   - pinnedWorkflows: Workflows to pin to the top
+#   - groups: Nested groups for hierarchical organization
+#
+# Run 'rivet --help' for more information
+
+`
+	fullContent := header + string(data)
+
+	if err := os.WriteFile(path, []byte(fullContent), 0644); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 
@@ -122,6 +142,10 @@ func (c *Config) Save(path string) error {
 }
 
 func (c *Config) Validate() error {
+	if c.Repository == "" {
+		return fmt.Errorf("configuration must specify a repository (owner/repo)")
+	}
+
 	if len(c.Groups) == 0 {
 		return fmt.Errorf("configuration must have at least one group")
 	}

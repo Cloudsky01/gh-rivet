@@ -59,7 +59,7 @@ func NewMenuModel(cfg *config.Config, configPath string, gh *github.Client, opts
 		BorderForeground(lipgloss.Color("blue"))
 
 	l := list.New(items, delegate, 0, 0)
-	l.Title = "Browse Groups"
+	l.Title = fmt.Sprintf("📦 %s", cfg.Repository)
 	l.SetShowStatusBar(true)
 	l.SetFilteringEnabled(true)
 	l.Styles.Title = lipgloss.NewStyle().

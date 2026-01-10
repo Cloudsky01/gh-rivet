@@ -1,16 +1,19 @@
 package wizard
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Cloudsky01/gh-rivet/internal/config"
+	"github.com/Cloudsky01/gh-rivet/internal/git"
+	"github.com/Cloudsky01/gh-rivet/internal/github"
 )
 
-// GroupBuilder holds the state for building a group
 type GroupBuilder struct {
 	ID          string
 	Name        string
@@ -18,14 +21,13 @@ type GroupBuilder struct {
 	Workflows   []string
 }
 
-// Wizard handles the interactive configuration creation
 type Wizard struct {
 	availableWorkflows []string
 	groups             []GroupBuilder
 	configPath         string
+	repository         string
 }
 
-// New creates a new wizard with the discovered workflows
 func New(workflows []string, configPath string) *Wizard {
 	return &Wizard{
 		availableWorkflows: workflows,
@@ -34,19 +36,58 @@ func New(workflows []string, configPath string) *Wizard {
 	}
 }
 
-// Run executes the interactive wizard
-func (w *Wizard) Run() (*config.Config, error) {
-	// Welcome message
-	fmt.Println()
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("blue"))
-	fmt.Println(titleStyle.Render("Rivet Configuration Wizard"))
-	fmt.Printf("Found %d workflow(s) in .github/workflows\n\n", len(w.availableWorkflows))
+func (w *Wizard) SetRepository(repo string) {
+	w.repository = repo
+}
 
-	// Main loop - keep creating groups until the user is done
+func (w *Wizard) Run() (*config.Config, error) {
+	if !isTTY() {
+		return w.runNonInteractive()
+	}
+
+	w.printWelcome()
+
+	if w.repository == "" {
+		if err := w.promptRepository(); err != nil {
+			return nil, err
+		}
+	}
+
+	fmt.Println(GetInfoStyle().Render(fmt.Sprintf("✓ Repository: %s", w.repository)))
+	fmt.Println()
+
+	organizationChoice := ""
+	if err := w.promptOrganization(&organizationChoice); err != nil {
+		return nil, err
+	}
+
+	switch organizationChoice {
+	case "single":
+		return w.createDefaultConfig(), nil
+	case "custom":
+		return w.createCustomGroups()
+	default:
+		return w.createDefaultConfig(), nil
+	}
+}
+
+func (w *Wizard) printWelcome() {
+	fmt.Println()
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99"))
+	subtitleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	fmt.Println(titleStyle.Render("🚀 Rivet Configuration Wizard"))
+	fmt.Println(subtitleStyle.Render("Let's set up your GitHub Actions workflow viewer"))
+	fmt.Println()
+	fmt.Println(GetInfoStyle().Render(fmt.Sprintf("Found %d workflow(s)", len(w.availableWorkflows))))
+	fmt.Println()
+}
+
+func (w *Wizard) createCustomGroups() (*config.Config, error) {
+	successStyle := GetInfoStyle()
+
 	for {
 		addMore := true
 		if len(w.groups) > 0 {
-			// Ask if a user wants to add another group
 			if err := w.promptAddMoreGroups(&addMore); err != nil {
 				return nil, err
 			}
@@ -56,7 +97,6 @@ func (w *Wizard) Run() (*config.Config, error) {
 			break
 		}
 
-		// Create a new group
 		group, err := w.createGroup()
 		if err != nil {
 			return nil, err
@@ -64,12 +104,11 @@ func (w *Wizard) Run() (*config.Config, error) {
 
 		if group != nil {
 			w.groups = append(w.groups, *group)
-			fmt.Printf("\nGroup '%s' created with %d workflow(s)\n\n",
-				group.Name, len(group.Workflows))
+			fmt.Println(successStyle.Render(fmt.Sprintf("✓ Group '%s' created with %d workflow(s)", group.Name, len(group.Workflows))))
+			fmt.Println()
 		}
 	}
 
-	// Handle case where no groups were created
 	if len(w.groups) == 0 {
 		return w.createDefaultConfig(), nil
 	}
@@ -77,9 +116,23 @@ func (w *Wizard) Run() (*config.Config, error) {
 	return w.buildConfig(), nil
 }
 
-// promptAddMoreGroups asks if the user wants to add another group
+func (w *Wizard) promptOrganization(choice *string) error {
+	return huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("How would you like to organize your workflows?").
+				Description("Groups help you categorize and navigate workflows").
+				Options(
+					huh.NewOption("Single group (all workflows together)", "single"),
+					huh.NewOption("Custom groups (organize by category)", "custom"),
+				).
+				Value(choice),
+		),
+	).Run()
+}
+
 func (w *Wizard) promptAddMoreGroups(addMore *bool) error {
-	form := huh.NewForm(
+	return huh.NewForm(
 		huh.NewGroup(
 			huh.NewConfirm().
 				Title("Add another group?").
@@ -88,24 +141,18 @@ func (w *Wizard) promptAddMoreGroups(addMore *bool) error {
 				Negative("No, finish setup").
 				Value(addMore),
 		),
-	)
-
-	return form.Run()
+	).Run()
 }
 
-// createGroup walks through the group creation process
 func (w *Wizard) createGroup() (*GroupBuilder, error) {
 	group := &GroupBuilder{}
 
-	// Step 1: Get group name and description
 	if err := w.promptGroupDetails(group); err != nil {
 		return nil, err
 	}
 
-	// Generate ID from name
 	group.ID = w.generateID(group.Name)
 
-	// Step 2: Select workflows for this group
 	if err := w.promptWorkflowSelection(group); err != nil {
 		return nil, err
 	}
@@ -113,14 +160,13 @@ func (w *Wizard) createGroup() (*GroupBuilder, error) {
 	return group, nil
 }
 
-// promptGroupDetails gets the group name and description
 func (w *Wizard) promptGroupDetails(group *GroupBuilder) error {
-	form := huh.NewForm(
+	return huh.NewForm(
 		huh.NewGroup(
 			huh.NewInput().
 				Title("Group Name").
-				Description("A display name for this group (e.g., 'CI/CD', 'Frontend')").
-				Placeholder("My Group").
+				Description("A display name for this group").
+				Placeholder("e.g., 'CI/CD', 'Backend', 'Frontend', 'Deployment'").
 				Validate(func(s string) error {
 					if strings.TrimSpace(s) == "" {
 						return fmt.Errorf("name is required")
@@ -128,50 +174,53 @@ func (w *Wizard) promptGroupDetails(group *GroupBuilder) error {
 					return nil
 				}).
 				Value(&group.Name),
-
 			huh.NewInput().
 				Title("Description (optional)").
 				Description("A brief description of what this group contains").
-				Placeholder("Workflows for...").
+				Placeholder("e.g., 'Build and test workflows', 'Production deployments'").
 				Value(&group.Description),
 		),
-	)
-
-	return form.Run()
+	).Run()
 }
 
-// promptWorkflowSelection lets user select workflows for the group
 func (w *Wizard) promptWorkflowSelection(group *GroupBuilder) error {
-	// Get remaining workflows (not yet assigned to any group)
 	available := w.getRemainingWorkflows()
-
 	if len(available) == 0 {
-		fmt.Println("\nNo workflows remaining to assign.")
+		fmt.Println(GetWarnStyle().Render("\n⚠ No workflows remaining to assign."))
+		fmt.Println()
 		return nil
 	}
 
-	// Build options for multi-select
 	options := make([]huh.Option[string], len(available))
 	for i, wf := range available {
 		options[i] = huh.NewOption(wf, wf)
 	}
 
-	form := huh.NewForm(
+	err := huh.NewForm(
 		huh.NewGroup(
 			huh.NewMultiSelect[string]().
 				Title(fmt.Sprintf("Select workflows for '%s'", group.Name)).
-				Description("Use space to select, enter to confirm. Type to filter.").
+				Description(fmt.Sprintf("Available: %d of %d workflows (Use space to select, / to filter)",
+					len(available), len(w.availableWorkflows))).
 				Options(options...).
 				Filterable(true).
-				Limit(len(available)). // Allow selecting all
+				Limit(10).
 				Value(&group.Workflows),
 		),
-	)
+	).Run()
 
-	return form.Run()
+	if err != nil {
+		return err
+	}
+
+	if len(group.Workflows) == 0 {
+		fmt.Println(GetWarnStyle().Render("\n⚠ No workflows selected for this group. The group will be empty."))
+		fmt.Println()
+	}
+
+	return nil
 }
 
-// getRemainingWorkflows returns workflows not yet assigned to any group
 func (w *Wizard) getRemainingWorkflows() []string {
 	assigned := make(map[string]bool)
 	for _, group := range w.groups {
@@ -189,13 +238,10 @@ func (w *Wizard) getRemainingWorkflows() []string {
 	return remaining
 }
 
-// generateID creates a URL-safe ID from a name
 func (w *Wizard) generateID(name string) string {
-	// Convert to lowercase and replace spaces with hyphens
 	id := strings.ToLower(strings.TrimSpace(name))
 	id = strings.ReplaceAll(id, " ", "-")
 
-	// Remove any characters that aren't alphanumeric or hyphens
 	var result strings.Builder
 	for _, r := range id {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
@@ -204,8 +250,6 @@ func (w *Wizard) generateID(name string) string {
 	}
 
 	id = result.String()
-
-	// Ensure uniqueness
 	baseID := id
 	counter := 1
 	for w.idExists(id) {
@@ -216,7 +260,6 @@ func (w *Wizard) generateID(name string) string {
 	return id
 }
 
-// idExists checks if an ID is already used
 func (w *Wizard) idExists(id string) bool {
 	for _, group := range w.groups {
 		if group.ID == id {
@@ -226,10 +269,77 @@ func (w *Wizard) idExists(id string) bool {
 	return false
 }
 
-// buildConfig converts the wizard state to a Config
+func (w *Wizard) promptRepository() error {
+	detectedRepo, _ := git.DetectRepository()
+	var repo string
+
+	if detectedRepo != "" {
+		confirmed := false
+		err := huh.NewForm(
+			huh.NewGroup(
+				huh.NewConfirm().
+					Title("📦 Repository Detection").
+					Description(fmt.Sprintf("Detected: %s", detectedRepo)).
+					Affirmative("Yes, use this").
+					Negative("No, enter different").
+					Value(&confirmed),
+			),
+		).Run()
+
+		if err != nil {
+			return err
+		}
+
+		if confirmed {
+			repo = detectedRepo
+		}
+	}
+
+	if repo == "" {
+		err := huh.NewForm(
+			huh.NewGroup(
+				huh.NewInput().
+					Title("📦 GitHub Repository").
+					Description("Format: owner/repo").
+					Placeholder("e.g., maintainx/maintainx").
+					Validate(func(s string) error {
+						if strings.TrimSpace(s) == "" {
+							return fmt.Errorf("repository is required")
+						}
+						return git.ValidateRepositoryFormat(strings.TrimSpace(s))
+					}).
+					Value(&repo),
+			),
+		).Run()
+
+		if err != nil {
+			return err
+		}
+	}
+
+	repo = strings.TrimSpace(repo)
+
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("Validating repository..."))
+
+	client := github.NewClient("")
+	ctx := context.Background()
+	exists, err := client.RepositoryExists(ctx, repo)
+
+	if err != nil || !exists {
+		fmt.Println(GetErrorStyle().Render(fmt.Sprintf("\n✗ Failed to validate repository: %s", repo)))
+		if err != nil {
+			fmt.Println(GetErrorStyle().Render(fmt.Sprintf("  %v", err)))
+		}
+		fmt.Println()
+		return w.promptRepository()
+	}
+
+	w.repository = repo
+	return nil
+}
+
 func (w *Wizard) buildConfig() *config.Config {
 	groups := make([]config.Group, len(w.groups))
-
 	for i, gb := range w.groups {
 		groups[i] = config.Group{
 			ID:          gb.ID,
@@ -240,20 +350,84 @@ func (w *Wizard) buildConfig() *config.Config {
 	}
 
 	return &config.Config{
-		Groups: groups,
+		Repository: w.repository,
+		Groups:     groups,
 	}
 }
 
-// createDefaultConfig creates a config with all workflows in one group
 func (w *Wizard) createDefaultConfig() *config.Config {
+	fmt.Println(GetInfoStyle().Render("✓ Creating single group with all workflows"))
+	fmt.Println()
+
 	return &config.Config{
+		Repository: w.repository,
 		Groups: []config.Group{
 			{
 				ID:          "workflows",
 				Name:        "Workflows",
-				Description: "All discovered workflows",
+				Description: "All workflows",
 				Workflows:   w.availableWorkflows,
 			},
 		},
 	}
+}
+
+func isTTY() bool {
+	fileInfo, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return (fileInfo.Mode() & os.ModeCharDevice) != 0
+}
+
+func IsTTY() bool {
+	return isTTY()
+}
+
+func AskConfirm(title, description string, result *bool) error {
+	if !isTTY() {
+		return fmt.Errorf("cannot ask for confirmation in non-interactive mode")
+	}
+
+	return huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title(title).
+				Description(description).
+				Affirmative("Yes").
+				Negative("No").
+				Value(result),
+		),
+	).Run()
+}
+
+func GetInfoStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("86"))
+}
+
+func GetWarnStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+}
+
+func GetErrorStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+}
+
+func (w *Wizard) runNonInteractive() (*config.Config, error) {
+	fmt.Println()
+	fmt.Println("Running in non-interactive mode (no TTY detected)")
+	fmt.Printf("Creating default configuration with %d workflow(s)\n", len(w.availableWorkflows))
+	fmt.Println()
+
+	if w.repository == "" {
+		detectedRepo, _ := git.DetectRepository()
+		if detectedRepo != "" {
+			w.repository = detectedRepo
+			fmt.Printf("Detected repository: %s\n", detectedRepo)
+		} else {
+			return nil, fmt.Errorf("no repository specified and could not detect from .git/config")
+		}
+	}
+
+	return w.createDefaultConfig(), nil
 }

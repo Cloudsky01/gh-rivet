@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Cloudsky01/gh-rivet/pkg/models"
@@ -204,4 +205,82 @@ func (c *Client) OpenRunInBrowser(runID int) error {
 		return fmt.Errorf("failed to open run in browser: %w\nOutput: %s", err, string(output))
 	}
 	return nil
+}
+
+// RepositoryExists checks if a repository exists on GitHub
+func (c *Client) RepositoryExists(ctx context.Context, repo string) (bool, error) {
+	cmdCtx, cancel := context.WithTimeout(ctx, DefaultTimeout)
+	defer cancel()
+
+	// Use gh api to check if repository exists
+	args := []string{"api", fmt.Sprintf("repos/%s", repo)}
+
+	cmd := exec.CommandContext(cmdCtx, "gh", args...)
+	output, err := cmd.Output()
+
+	if err != nil {
+		if cmdCtx.Err() == context.DeadlineExceeded {
+			return false, fmt.Errorf("gh api timed out after %v", DefaultTimeout)
+		}
+
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			// Repository doesn't exist or is not accessible
+			stderr := string(exitErr.Stderr)
+			if stderr != "" {
+				return false, fmt.Errorf("repository not found or not accessible: %s", stderr)
+			}
+		}
+		return false, fmt.Errorf("gh api failed: %w", err)
+	}
+
+	// If we get valid JSON response, repository exists
+	var result interface{}
+	if err := json.Unmarshal(output, &result); err != nil {
+		return false, fmt.Errorf("failed to parse repository response: %w", err)
+	}
+
+	return true, nil
+}
+
+// GetWorkflows fetches the list of workflow files from a repository
+func (c *Client) GetWorkflows(ctx context.Context, repo string) ([]string, error) {
+	cmdCtx, cancel := context.WithTimeout(ctx, DefaultTimeout)
+	defer cancel()
+
+	args := []string{"api", "--paginate", fmt.Sprintf("repos/%s/actions/workflows", repo), "--jq", ".workflows[].path"}
+	cmd := exec.CommandContext(cmdCtx, "gh", args...)
+	output, err := cmd.Output()
+
+	if err != nil {
+		if cmdCtx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("gh api timed out after %v", DefaultTimeout)
+		}
+
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return nil, fmt.Errorf("failed to fetch workflows: %s", string(exitErr.Stderr))
+		}
+		return nil, fmt.Errorf("gh api failed: %w", err)
+	}
+
+	return parseWorkflowPaths(string(output)), nil
+}
+
+func parseWorkflowPaths(output string) []string {
+	var workflows []string
+	const prefix = ".github/workflows/"
+
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, prefix) {
+			workflows = append(workflows, line[len(prefix):])
+		}
+	}
+
+	sort.Strings(workflows)
+	return workflows
 }

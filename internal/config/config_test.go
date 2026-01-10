@@ -189,6 +189,7 @@ func TestValidate(t *testing.T) {
 		{
 			name: "Valid config",
 			config: &Config{
+				Repository: "owner/repo",
 				Groups: []Group{
 					{
 						ID:   "test",
@@ -201,13 +202,15 @@ func TestValidate(t *testing.T) {
 		{
 			name: "Empty config",
 			config: &Config{
-				Groups: []Group{},
+				Repository: "owner/repo",
+				Groups:     []Group{},
 			},
 			expectError: true,
 		},
 		{
 			name: "Missing group ID",
 			config: &Config{
+				Repository: "owner/repo",
 				Groups: []Group{
 					{
 						Name: "Test Group",
@@ -219,6 +222,7 @@ func TestValidate(t *testing.T) {
 		{
 			name: "Missing group name",
 			config: &Config{
+				Repository: "owner/repo",
 				Groups: []Group{
 					{
 						ID: "test",
