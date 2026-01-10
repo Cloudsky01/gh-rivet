@@ -30,8 +30,8 @@ type pinnedListItem struct {
 	group        *config.Group
 }
 
-func (i pinnedListItem) Title() string       { return i.workflowName }
-func (i pinnedListItem) Description() string { return "pinned " + i.groupPath }
+func (i pinnedListItem) Title() string       { return "📌 " + i.workflowName }
+func (i pinnedListItem) Description() string { return "📁 " + i.groupPath }
 func (i pinnedListItem) FilterValue() string { return i.workflowName + " " + i.groupPath }
 
 func buildListItems(cfg *config.Config, groupPath []*config.Group) []list.Item {
@@ -74,7 +74,7 @@ func buildListItems(cfg *config.Config, groupPath []*config.Group) []list.Item {
 
 		items = append(items, listItem{
 			isGroup:     true,
-			name:        groups[i].Name,
+			name:        "📂 " + groups[i].Name,
 			description: description,
 			group:       &groups[i],
 		})
@@ -97,11 +97,15 @@ func buildListItems(cfg *config.Config, groupPath []*config.Group) []list.Item {
 			name = wfDef.Name
 		}
 
+		// Add icon based on pinned status
+		icon := "📄"
 		if pinned {
+			icon = "📌"
 			desc = "Workflow (pinned)"
 		} else {
 			desc = "Workflow"
 		}
+		name = icon + " " + name
 		return
 	}
 
@@ -161,7 +165,6 @@ func createPinnedList(cfg *config.Config) list.Model {
 	l := list.New(items, delegate, 0, 0)
 	l.Title = "Pinned Workflows"
 	l.SetShowStatusBar(true)
-	l.SetFilteringEnabled(true)
 	l.Styles.Title = lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("blue")).

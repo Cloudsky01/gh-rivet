@@ -19,16 +19,6 @@ var (
 	asciiStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("99"))
 )
 
-func getASCIIArt() string {
-	return `
-     _           _
-    (_)         | |
- _ __ ___   _____| |_
-| '__| \ \ / / _ \ __|
-| |  | |\ V /  __/ |_|
-|_|  |_| \_/ \___|\__|
-`
-}
 
 func printSuccessSummary(configPath string, cfg *config.Config) {
 	divider := dividerStyle.Render("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")

@@ -1,63 +1,74 @@
 package tui
 
 import (
-	"fmt"
-	"strings"
-
 	"github.com/charmbracelet/lipgloss"
 )
 
-var (
-	hintStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	headerStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("blue"))
-	errorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("red"))
-)
-
-func (m MenuModel) View() string {
-	switch m.viewState {
-	case browsingGroups:
-		return m.renderBrowsingView()
-	case viewingPinnedWorkflows:
-		return m.renderPinnedView()
-	case viewingWorkflowOutput:
-		return m.renderWorkflowView()
-	}
-	return ""
-}
-
-func (m MenuModel) renderBrowsingView() string {
-	view := m.list.View()
-
-	if len(m.groupPath) > 0 {
-		hint := hintStyle.Render("\nenter select | w open in web | p toggle pin | esc back | tab pinned | q quit")
-		return view + hint
+// renderMultiPanelLayout renders the new Superfile-inspired layout
+func (m MenuModel) renderMultiPanelLayout() string {
+	if m.width == 0 || m.height == 0 {
+		return ""
 	}
 
-	hint := hintStyle.Render("\nenter select | tab pinned workflows | q quit")
-	return view + hint
-}
+	// Calculate panel dimensions with minimum widths
+	minSidebarWidth := 25
+	minDetailsWidth := 30
+	minMainWidth := 40
 
-func (m MenuModel) renderPinnedView() string {
-	view := m.pinnedList.View()
-	hint := hintStyle.Render("\nenter select | p unpin | w open in browser | tab/esc groups | q quit")
-	return view + hint
-}
-
-func (m MenuModel) renderWorkflowView() string {
-	var s strings.Builder
-
-	s.WriteString(headerStyle.Render(fmt.Sprintf("Workflow: %s", m.selectedWorkflow)))
-	s.WriteString("\n\n")
-
-	if m.err != nil {
-		s.WriteString(errorStyle.Render(fmt.Sprintf("Error: %v\n", m.err)))
-	} else if len(m.workflowRuns) == 0 {
-		s.WriteString("No workflow runs found.")
-	} else {
-		s.WriteString(m.table.View())
-		s.WriteString("\n\n")
+	sidebarWidth := max(minSidebarWidth, m.width/5)        // 20% but at least 25 chars
+	detailsWidth := max(minDetailsWidth, m.width/3)        // 33% but at least 30 chars
+	mainWidth := m.width - sidebarWidth - detailsWidth - 6 // Rest minus borders
+	if mainWidth < minMainWidth {
+		// Terminal too small, adjust proportionally
+		sidebarWidth = m.width / 4
+		detailsWidth = m.width / 4
+		mainWidth = m.width - sidebarWidth - detailsWidth - 6
 	}
 
-	s.WriteString(hintStyle.Render("\nw open run in browser | esc back | q quit"))
-	return s.String()
+	panelHeight := m.height - 6 // Leave room for breadcrumb and help
+	if panelHeight < 10 {
+		panelHeight = 10 // Minimum height
+	}
+
+	// Adjust if runs panel is visible
+	runsHeight := 0
+	if m.showRunsPanel {
+		runsHeight = max(10, panelHeight/3)
+		panelHeight = panelHeight - runsHeight - 3
+		if panelHeight < 10 {
+			panelHeight = 10
+			runsHeight = m.height - 6 - panelHeight - 3
+		}
+	}
+
+	// Render each panel
+	sidebar := m.renderSidebar(sidebarWidth, panelHeight)
+	navigation := m.renderNavigation(mainWidth, panelHeight)
+	details := m.renderDetails(detailsWidth, panelHeight)
+
+	// Join panels horizontally with borders
+	topRow := lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		m.panelBorder(sidebar, SidebarPanel),
+		m.panelBorder(navigation, NavigationPanel),
+		m.panelBorder(details, DetailsPanel),
+	)
+
+	// Add bottom runs panel if visible
+	if m.showRunsPanel {
+		runsPanel := m.renderRunsPanel(m.width-2, runsHeight)
+		bordered := m.panelBorder(runsPanel, RunsPanel)
+		topRow = lipgloss.JoinVertical(lipgloss.Left, topRow, bordered)
+	}
+
+	// Add breadcrumb and help bar
+	breadcrumb := m.renderBreadcrumb()
+	helpBar := m.renderHelpBar()
+
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		topRow,
+		breadcrumb,
+		helpBar,
+	)
 }

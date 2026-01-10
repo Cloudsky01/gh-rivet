@@ -30,7 +30,11 @@ Thumbs.db
 # Added by goreleaser init:
 dist/
 
-# Rivet state files (user-specific navigation state)
+# Rivet state files
 *.state.yaml
 .rivet.state.yaml
-CLAUDE.md
+
+bin/
+
+.claude/
+.cursor/

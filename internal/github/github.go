@@ -17,11 +17,22 @@ import (
 const DefaultTimeout = 30 * time.Second
 
 type Client struct {
-	repo string
+	repo    string
+	timeout time.Duration
 }
 
 func NewClient(repo string) *Client {
-	return &Client{repo: repo}
+	return NewClientWithTimeout(repo, DefaultTimeout)
+}
+
+func NewClientWithTimeout(repo string, timeout time.Duration) *Client {
+	if timeout <= 0 {
+		timeout = DefaultTimeout
+	}
+	return &Client{
+		repo:    repo,
+		timeout: timeout,
+	}
 }
 
 func (c *Client) GetLatestRun() (*models.GHRun, error) {
@@ -40,7 +51,7 @@ func (c *Client) GetRecentRuns(limit int) ([]models.GHRun, error) {
 }
 
 func (c *Client) GetWorkflowRuns(workflowName string, limit int) ([]models.GHRun, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
 
 	args := []string{"run", "list", "--limit", fmt.Sprintf("%d", limit), "--json", "databaseId,displayTitle,workflowName,status,conclusion,createdAt,headBranch"}
@@ -57,7 +68,7 @@ func (c *Client) GetWorkflowRuns(workflowName string, limit int) ([]models.GHRun
 	output, err := cmd.Output()
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("gh run list timed out after %v", DefaultTimeout)
+			return nil, fmt.Errorf("gh run list timed out after %v", c.timeout)
 		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
@@ -82,7 +93,7 @@ func (c *Client) GetWorkflowRuns(workflowName string, limit int) ([]models.GHRun
 }
 
 func (c *Client) GetRunByID(runID int) (*models.GHRun, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
 
 	args := []string{"run", "view", fmt.Sprintf("%d", runID), "--json", "databaseId,displayTitle,workflowName,status,conclusion,createdAt,headBranch"}
@@ -95,7 +106,7 @@ func (c *Client) GetRunByID(runID int) (*models.GHRun, error) {
 	output, err := cmd.Output()
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("gh run view timed out after %v", DefaultTimeout)
+			return nil, fmt.Errorf("gh run view timed out after %v", c.timeout)
 		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
@@ -113,7 +124,7 @@ func (c *Client) GetRunByID(runID int) (*models.GHRun, error) {
 }
 
 func (c *Client) GetRunJobs(runID int) ([]models.GHJob, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
 
 	args := []string{"run", "view", fmt.Sprintf("%d", runID), "--json", "jobs"}
@@ -126,7 +137,7 @@ func (c *Client) GetRunJobs(runID int) ([]models.GHJob, error) {
 	output, err := cmd.Output()
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("gh run view timed out after %v", DefaultTimeout)
+			return nil, fmt.Errorf("gh run view timed out after %v", c.timeout)
 		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
@@ -166,7 +177,7 @@ func (c *Client) GetJobsFromRuns(runs []models.GHRun) ([]models.GHJob, error) {
 }
 
 func (c *Client) OpenWorkflowInBrowser(workflowName string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
 
 	args := []string{"workflow", "view", workflowName, "-w"}
@@ -179,7 +190,7 @@ func (c *Client) OpenWorkflowInBrowser(workflowName string) error {
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("gh workflow view timed out after %v", DefaultTimeout)
+			return fmt.Errorf("gh workflow view timed out after %v", c.timeout)
 		}
 		return fmt.Errorf("failed to open workflow in browser: %w\nOutput: %s", err, string(output))
 	}
@@ -187,7 +198,7 @@ func (c *Client) OpenWorkflowInBrowser(workflowName string) error {
 }
 
 func (c *Client) OpenRunInBrowser(runID int) error {
-	ctx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
 
 	args := []string{"run", "view", fmt.Sprintf("%d", runID), "-w"}
@@ -200,7 +211,7 @@ func (c *Client) OpenRunInBrowser(runID int) error {
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("gh run view timed out after %v", DefaultTimeout)
+			return fmt.Errorf("gh run view timed out after %v", c.timeout)
 		}
 		return fmt.Errorf("failed to open run in browser: %w\nOutput: %s", err, string(output))
 	}
@@ -209,7 +220,7 @@ func (c *Client) OpenRunInBrowser(runID int) error {
 
 // RepositoryExists checks if a repository exists on GitHub
 func (c *Client) RepositoryExists(ctx context.Context, repo string) (bool, error) {
-	cmdCtx, cancel := context.WithTimeout(ctx, DefaultTimeout)
+	cmdCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
 	// Use gh api to check if repository exists
@@ -220,7 +231,7 @@ func (c *Client) RepositoryExists(ctx context.Context, repo string) (bool, error
 
 	if err != nil {
 		if cmdCtx.Err() == context.DeadlineExceeded {
-			return false, fmt.Errorf("gh api timed out after %v", DefaultTimeout)
+			return false, fmt.Errorf("gh api timed out after %v", c.timeout)
 		}
 
 		var exitErr *exec.ExitError
@@ -245,7 +256,7 @@ func (c *Client) RepositoryExists(ctx context.Context, repo string) (bool, error
 
 // GetWorkflows fetches the list of workflow files from a repository
 func (c *Client) GetWorkflows(ctx context.Context, repo string) ([]string, error) {
-	cmdCtx, cancel := context.WithTimeout(ctx, DefaultTimeout)
+	cmdCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
 	args := []string{"api", "--paginate", fmt.Sprintf("repos/%s/actions/workflows", repo), "--jq", ".workflows[].path"}
@@ -254,7 +265,7 @@ func (c *Client) GetWorkflows(ctx context.Context, repo string) ([]string, error
 
 	if err != nil {
 		if cmdCtx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("gh api timed out after %v", DefaultTimeout)
+			return nil, fmt.Errorf("gh api timed out after %v", c.timeout)
 		}
 
 		var exitErr *exec.ExitError

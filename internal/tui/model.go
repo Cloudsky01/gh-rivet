@@ -5,15 +5,20 @@ import (
 	"os"
 
 	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/evertras/bubble-table/table"
 
 	"github.com/Cloudsky01/gh-rivet/internal/config"
 	"github.com/Cloudsky01/gh-rivet/internal/github"
 	"github.com/Cloudsky01/gh-rivet/internal/state"
 	"github.com/Cloudsky01/gh-rivet/pkg/models"
 )
+
+type workflowRunsMsg struct {
+	runs []models.GHRun
+	err  error
+}
 
 type viewState int
 
@@ -38,6 +43,19 @@ type MenuModel struct {
 	workflowRuns     []models.GHRun
 	err              error
 	width, height    int
+	loading          bool
+
+	activePanel   PanelType
+	showRunsPanel bool
+
+	tablePageSize int
+
+	sidebarFilterActive     bool
+	sidebarFilterInput      string
+	sidebarFilteredIndex    int
+	navigationFilterActive  bool
+	navigationFilterInput   string
+	navigationFilteredIndex int
 }
 
 type MenuOptions struct {
@@ -59,9 +77,8 @@ func NewMenuModel(cfg *config.Config, configPath string, gh *github.Client, opts
 		BorderForeground(lipgloss.Color("blue"))
 
 	l := list.New(items, delegate, 0, 0)
-	l.Title = fmt.Sprintf("📦 %s", cfg.Repository)
+	l.Title = "Browse Groups"
 	l.SetShowStatusBar(true)
-	l.SetFilteringEnabled(true)
 	l.Styles.Title = lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("blue")).
@@ -72,14 +89,21 @@ func NewMenuModel(cfg *config.Config, configPath string, gh *github.Client, opts
 		statePath = state.DefaultStatePath(configPath)
 	}
 
+	// Initialize pinned list
+	pinnedList := createPinnedList(cfg)
+
 	m := MenuModel{
-		config:     cfg,
-		configPath: configPath,
-		statePath:  statePath,
-		gh:         gh,
-		viewState:  browsingGroups,
-		groupPath:  []*config.Group{},
-		list:       l,
+		config:        cfg,
+		configPath:    configPath,
+		statePath:     statePath,
+		gh:            gh,
+		viewState:     browsingGroups,
+		groupPath:     []*config.Group{},
+		list:          l,
+		pinnedList:    pinnedList,
+		activePanel:   NavigationPanel, // Default to navigation panel
+		showRunsPanel: false,
+		tablePageSize: 10,
 	}
 
 	if !opts.NoRestoreState {
@@ -104,17 +128,9 @@ func (m MenuModel) fetchWorkflowRuns() ([]models.GHRun, error) {
 	return m.gh.GetWorkflowRuns(m.selectedWorkflow, 20)
 }
 
-func (m MenuModel) getSelectedRunID() int {
-	if len(m.workflowRuns) == 0 {
-		return 0
-	}
-
-	cursor := m.table.Cursor()
-	if cursor < 0 || cursor >= len(m.workflowRuns) {
-		return 0
-	}
-
-	return m.workflowRuns[cursor].DatabaseID
+func (m MenuModel) fetchWorkflowRunsCmd() tea.Msg {
+	runs, err := m.gh.GetWorkflowRuns(m.selectedWorkflow, 20)
+	return workflowRunsMsg{runs: runs, err: err}
 }
 
 func RunMenu(m MenuModel) error {
@@ -176,7 +192,7 @@ func (m *MenuModel) restoreState(s *state.NavigationState) {
 				m.err = err
 			} else {
 				m.workflowRuns = runs
-				m.table = buildWorkflowRunsTable(runs)
+				m.table = buildWorkflowRunsTable(runs, m.tablePageSize)
 			}
 			m.viewState = viewingWorkflowOutput
 		}

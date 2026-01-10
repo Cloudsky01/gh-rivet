@@ -5,19 +5,18 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"regexp"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/Cloudsky01/gh-rivet/internal/ascii"
 	"github.com/Cloudsky01/gh-rivet/internal/config"
 	"github.com/Cloudsky01/gh-rivet/internal/git"
 	"github.com/Cloudsky01/gh-rivet/internal/github"
 	"github.com/Cloudsky01/gh-rivet/internal/tui"
 	"github.com/Cloudsky01/gh-rivet/internal/wizard"
 )
-
-var repoFormatRegex = regexp.MustCompile(`^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$`)
 
 var (
 	version = "dev"
@@ -32,6 +31,7 @@ var (
 	startWithPinned bool
 	statePath       string
 	noState         bool
+	timeoutSeconds  int
 
 	rootCmd = &cobra.Command{
 		Use:   "rivet",
@@ -67,19 +67,20 @@ func init() {
 	rootCmd.Flags().BoolVarP(&startWithPinned, "pinned", "p", false, "Start with pinned workflows")
 	rootCmd.Flags().StringVar(&statePath, "state", "", "Path to state file")
 	rootCmd.Flags().BoolVar(&noState, "no-state", false, "Disable state persistence")
+	rootCmd.Flags().IntVar(&timeoutSeconds, "timeout", 30, "GitHub API timeout in seconds")
 
 	// Store original help functions before overriding
 	originalRootHelpFunc := rootCmd.HelpFunc()
 	originalInitHelpFunc := initCmd.HelpFunc()
 
 	rootCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
-		fmt.Println(asciiStyle.Render(getASCIIArt()))
+		fmt.Println(asciiStyle.Render(ascii.GetASCIIArt()))
 		fmt.Println()
 		originalRootHelpFunc(cmd, args)
 	})
 
 	initCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
-		fmt.Println(asciiStyle.Render(getASCIIArt()))
+		fmt.Println(asciiStyle.Render(ascii.GetASCIIArt()))
 		fmt.Println()
 		originalInitHelpFunc(cmd, args)
 	})
@@ -135,11 +136,12 @@ func runView(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("repository must be specified with --repo flag (e.g., --repo owner/repo)")
 	}
 
-	if !repoFormatRegex.MatchString(repo) {
+	if !git.RepositoryFormatRegex.MatchString(repo) {
 		return fmt.Errorf("invalid repository format '%s'. Expected format: OWNER/REPO (e.g., github/cli)", repo)
 	}
 
-	gh := github.NewClient(repo)
+	timeout := time.Duration(timeoutSeconds) * time.Second
+	gh := github.NewClientWithTimeout(repo, timeout)
 
 	opts := tui.MenuOptions{
 		StartWithPinned: startWithPinned,
@@ -169,11 +171,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 			return err
 		}
 
-		ghClient := github.NewClient("")
+		timeout := time.Duration(timeoutSeconds) * time.Second
+		ghClient := github.NewClientWithTimeout("", timeout)
 		ctx := context.Background()
 
 		// Validate repository exists with spinner
-		_, err := wizard.RunWithSpinner(fmt.Sprintf("Validating repository %s", repo), func() (interface{}, error) {
+		_, err := wizard.RunWithSpinner(ctx, fmt.Sprintf("Validating repository %s", repo), func() (any, error) {
 			exists, err := ghClient.RepositoryExists(ctx, repo)
 			if err != nil {
 				return nil, err
@@ -188,7 +191,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 
 		// Fetch workflows from GitHub with spinner
-		result, err := wizard.RunWithSpinner(fmt.Sprintf("Fetching workflows from %s", repo), func() (interface{}, error) {
+		result, err := wizard.RunWithSpinner(ctx, fmt.Sprintf("Fetching workflows from %s", repo), func() (interface{}, error) {
 			return ghClient.GetWorkflows(ctx, repo)
 		})
 		if err != nil {
@@ -257,8 +260,8 @@ func runUpdateRepo(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Validate repository exists on GitHub
-	ghClient := github.NewClient("")
+	timeout := time.Duration(timeoutSeconds) * time.Second
+	ghClient := github.NewClientWithTimeout("", timeout)
 	ctx := context.Background()
 	exists, err := ghClient.RepositoryExists(ctx, newRepo)
 	if err != nil || !exists {

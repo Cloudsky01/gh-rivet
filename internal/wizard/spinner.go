@@ -1,6 +1,7 @@
 package wizard
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -32,7 +33,7 @@ type spinnerCompleteMsg struct {
 
 func newSpinnerModel(message string) spinnerModel {
 	s := spinner.New()
-	s.Spinner = spinner.Dot
+	s.Spinner = spinner.Globe
 	s.Style = spinnerStyle
 	return spinnerModel{
 		spinner: s,
@@ -76,10 +77,8 @@ func (m spinnerModel) View() string {
 	return fmt.Sprintf("%s %s\n", m.spinner.View(), messageStyle.Render(m.message))
 }
 
-// RunWithSpinner runs a function with a loading spinner
-func RunWithSpinner(message string, fn func() (interface{}, error)) (interface{}, error) {
+func RunWithSpinner(ctx context.Context, message string, fn func() (any, error)) (any, error) {
 	if !isTTY() {
-		// Non-interactive mode - just run the function
 		fmt.Println(messageStyle.Render(message + "..."))
 		result, err := fn()
 		if err != nil {
@@ -90,19 +89,26 @@ func RunWithSpinner(message string, fn func() (interface{}, error)) (interface{}
 		return result, nil
 	}
 
-	m := newSpinnerModel(message)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
+	m := newSpinnerModel(message)
 	p := tea.NewProgram(m)
 
-	// Run the function in a goroutine
 	go func() {
-		// Add a small delay to ensure spinner is visible
 		time.Sleep(100 * time.Millisecond)
-		result, err := fn()
-		p.Send(spinnerCompleteMsg{result: result, err: err})
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			result, err := fn()
+			p.Send(spinnerCompleteMsg{result: result, err: err})
+		}
 	}()
 
 	finalModel, err := p.Run()
+	cancel()
+
 	if err != nil {
 		return nil, err
 	}

@@ -31,7 +31,7 @@ go install github.com/Cloudsky01/gh-rivet/cmd/rivet@latest
 Or build from source:
 ```bash
 git clone https://github.com/Cloudsky01/gh-rivet
-cd rivet
+cd gh-rivet
 make build
 ```
 
