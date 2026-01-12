@@ -12,7 +12,6 @@ import (
 
 	"github.com/Cloudsky01/gh-rivet/internal/config"
 	"github.com/Cloudsky01/gh-rivet/internal/git"
-	"github.com/Cloudsky01/gh-rivet/internal/migration"
 	"github.com/Cloudsky01/gh-rivet/internal/paths"
 )
 
@@ -62,13 +61,6 @@ Configuration Precedence (lowest to highest):
 		Long:  `Remove the user configuration file to reset to defaults.`,
 		RunE:  runConfigReset,
 	}
-
-	configMigrateCmd = &cobra.Command{
-		Use:   "migrate",
-		Short: "Migrate legacy configuration",
-		Long:  `Migrate from legacy .rivet.yaml to the new multi-tier configuration system.`,
-		RunE:  runConfigMigrate,
-	}
 )
 
 func init() {
@@ -77,7 +69,6 @@ func init() {
 	configCmd.AddCommand(configShowCmd)
 	configCmd.AddCommand(configEditCmd)
 	configCmd.AddCommand(configResetCmd)
-	configCmd.AddCommand(configMigrateCmd)
 }
 
 func runConfigPath(cmd *cobra.Command, args []string) error {
@@ -133,30 +124,14 @@ func runConfigPath(cmd *cobra.Command, args []string) error {
 }
 
 func runConfigShow(cmd *cobra.Command, args []string) error {
-	// Detect project root
-	projectRoot, _ := git.GetGitRepositoryRoot()
-
-	// Create paths
-	var p *paths.Paths
-	var err error
-	if projectRoot != "" {
-		p, err = paths.NewWithProject(projectRoot)
-	} else {
-		p, err = paths.New()
-	}
-	if err != nil {
-		return fmt.Errorf("failed to initialize paths: %w", err)
-	}
-
-	// Load merged config
-	cfg, err := config.LoadMultiTier(p, configPath)
+	// Try to load config from the given path
+	cfg, err := config.Load(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
-	fmt.Println("Merged Configuration")
+	fmt.Println("Configuration")
 	fmt.Println("════════════════════════════════════════════════════════════")
-	fmt.Printf("Source: %s\n", cfg.GetConfigSource())
 	fmt.Printf("Path:   %s\n", cfg.GetConfigPath())
 	fmt.Println()
 
@@ -167,13 +142,6 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println(string(data))
-
-	// Show which configs contributed
-	fmt.Println("════════════════════════════════════════════════════════════")
-	fmt.Println("Active Configuration Files:")
-	for _, path := range p.GetConfigPaths() {
-		fmt.Printf("  • %s (%s)\n", path, p.GetConfigSource(path))
-	}
 
 	return nil
 }
@@ -284,68 +252,6 @@ func runConfigReset(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("✓ User configuration removed: %s\n", userConfigPath)
-	return nil
-}
-
-func runConfigMigrate(cmd *cobra.Command, args []string) error {
-	// Detect project root
-	projectRoot, _ := git.GetGitRepositoryRoot()
-
-	// Create paths
-	var p *paths.Paths
-	var err error
-	if projectRoot != "" {
-		p, err = paths.NewWithProject(projectRoot)
-	} else {
-		p, err = paths.New()
-	}
-	if err != nil {
-		return fmt.Errorf("failed to initialize paths: %w", err)
-	}
-
-	// Check if migration is needed
-	needsMigration, legacyPath := migration.NeedsMigration(p)
-	if !needsMigration {
-		fmt.Println("✓ Configuration is already up to date.")
-		fmt.Println("  No legacy config found or migration already complete.")
-		return nil
-	}
-
-	// Show migration prompt
-	fmt.Print(migration.GetMigrationPrompt(legacyPath))
-
-	// Read user choice
-	reader := bufio.NewReader(os.Stdin)
-	response, err := reader.ReadString('\n')
-	if err != nil {
-		return fmt.Errorf("failed to read input: %w", err)
-	}
-
-	response = strings.TrimSpace(response)
-
-	// Parse choice
-	var choice migration.MigrationChoice
-	switch response {
-	case "1":
-		choice = migration.MigrateToUser
-	case "2":
-		choice = migration.KeepAsTeam
-	case "3":
-		choice = migration.Skip
-		return nil
-	default:
-		fmt.Println("Invalid choice. Migration cancelled.")
-		return nil
-	}
-
-	// Perform migration
-	if err := migration.Migrate(p, legacyPath, choice); err != nil {
-		return fmt.Errorf("migration failed: %w", err)
-	}
-
-	// Show success message
-	migration.ShowMigrationSuccess(p)
-
 	return nil
 }
 
