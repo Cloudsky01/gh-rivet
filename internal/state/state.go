@@ -1,12 +1,15 @@
 package state
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/Cloudsky01/gh-rivet/internal/config"
+	"github.com/Cloudsky01/gh-rivet/internal/paths"
 )
 
 // ViewState represents the current view in the TUI
@@ -37,10 +40,66 @@ type NavigationState struct {
 	PinnedListIndex int `yaml:"pinnedListIndex,omitempty"`
 }
 
-// DefaultStatePath returns the default state file path relative to config
+// DefaultStatePath returns the default state file path relative to config (legacy)
 func DefaultStatePath(configPath string) string {
 	dir := filepath.Dir(configPath)
 	return filepath.Join(dir, ".rivet.state.yaml")
+}
+
+// GetStatePath returns the state file path for a repository using the new paths system
+func GetStatePath(p *paths.Paths, repository string) (string, error) {
+	// Parse repository to get owner and name
+	parts := strings.Split(repository, "/")
+	if len(parts) != 2 {
+		return "", fmt.Errorf("invalid repository format, expected owner/repo: %s", repository)
+	}
+
+	// Ensure state directory exists
+	if err := p.EnsureDirs(); err != nil {
+		return "", fmt.Errorf("failed to ensure state directory: %w", err)
+	}
+
+	return p.UserStateFile(parts[0], parts[1]), nil
+}
+
+// LoadWithPaths loads state using the new paths system with migration support
+func LoadWithPaths(p *paths.Paths, repository string) (*NavigationState, error) {
+	// Get the new state path
+	statePath, err := GetStatePath(p, repository)
+	if err != nil {
+		return defaultState(), nil
+	}
+
+	// Try loading from new location
+	state, err := Load(statePath)
+	if err == nil {
+		return state, nil
+	}
+
+	// If new location doesn't exist, check for legacy state file
+	if legacyPath, found := p.FindLegacyState(); found {
+		state, err := Load(legacyPath)
+		if err == nil {
+			// Migrate to new location
+			if err := state.Save(statePath); err == nil {
+				// Migration successful, optionally clean up legacy file
+				// (commented out to avoid data loss)
+				// os.Remove(legacyPath)
+			}
+			return state, nil
+		}
+	}
+
+	// Return default state if nothing found
+	return defaultState(), nil
+}
+
+// defaultState returns a new default navigation state
+func defaultState() *NavigationState {
+	return &NavigationState{
+		ViewState: ViewBrowsingGroups,
+		GroupPath: []string{},
+	}
 }
 
 // Load reads the navigation state from a file

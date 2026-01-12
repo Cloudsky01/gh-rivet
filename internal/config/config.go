@@ -3,19 +3,59 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 
+	"github.com/Cloudsky01/gh-rivet/internal/paths"
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 )
 
+// Preferences contains user-specific settings that should not be shared
+type Preferences struct {
+	RefreshInterval int               `yaml:"refreshInterval,omitempty"` // in seconds, 0 = disabled
+	Theme           string            `yaml:"theme,omitempty"`           // Theme preference (e.g., "dark", "light")
+	Keybindings     string            `yaml:"keybindings,omitempty"`     // Keybinding style (e.g., "vim", "emacs")
+	CustomSettings  map[string]string `yaml:"customSettings,omitempty"`  // Extensible custom settings
+}
+
 type Config struct {
-	Repository      string  `yaml:"repository"`
-	RefreshInterval int     `yaml:"refreshInterval,omitempty"` // in seconds, 0 = disabled
-	Groups          []Group `yaml:"groups,omitempty"`
+	Repository  string       `yaml:"repository"`
+	Preferences *Preferences `yaml:"preferences,omitempty"` // User preferences (new, optional)
+	Groups      []Group      `yaml:"groups,omitempty"`
+
+	// Internal fields (not serialized)
+	configSource paths.ConfigSource `yaml:"-"` // Track where this config came from
+	configPath   string             `yaml:"-"` // Path to the config file
+}
+
+// GetRefreshInterval returns the refresh interval, checking preferences first
+func (c *Config) GetRefreshInterval() int {
+	if c.Preferences != nil {
+		return c.Preferences.RefreshInterval
+	}
+	return 0
+}
+
+// SetRefreshInterval sets the refresh interval in preferences
+func (c *Config) SetRefreshInterval(interval int) {
+	if c.Preferences == nil {
+		c.Preferences = &Preferences{}
+	}
+	c.Preferences.RefreshInterval = interval
+}
+
+// GetConfigSource returns the source of this config
+func (c *Config) GetConfigSource() paths.ConfigSource {
+	return c.configSource
+}
+
+// GetConfigPath returns the path to this config file
+func (c *Config) GetConfigPath() string {
+	return c.configPath
 }
 
 type Workflow struct {
@@ -42,6 +82,7 @@ type Group struct {
 	PinnedWorkflows  []string   `yaml:"pinnedWorkflows,omitempty"`
 }
 
+// Load loads a config file from a single path (legacy function, kept for backward compatibility)
 func Load(path string) (*Config, error) {
 	v := viper.New()
 
@@ -67,7 +108,165 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
 
+	config.configPath = v.ConfigFileUsed()
+
 	return &config, nil
+}
+
+// LoadFromPath loads a config from a specific path with source tracking
+func LoadFromPath(path string, source paths.ConfigSource) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	var config Config
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse config: %w", err)
+	}
+
+	config.configSource = source
+	config.configPath = path
+
+	return &config, nil
+}
+
+// LoadMultiTier loads config from multiple sources and merges them
+// The order of precedence (lowest to highest):
+// 1. Repository default (.github/.rivet.yaml)
+// 2. User global config (~/.config/rivet/config.yaml)
+// 3. Project user config (.git/.rivet/config.yaml)
+// 4. Environment variables (RIVET_*)
+// 5. Explicit path via CLI flag (if provided)
+func LoadMultiTier(p *paths.Paths, explicitPath string) (*Config, error) {
+	var baseConfig *Config
+	var err error
+
+	if explicitPath != "" {
+		// CLI flag has highest priority - load only this file
+		baseConfig, err = LoadFromPath(explicitPath, paths.SourceCLIFlag)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load config from %s: %w", explicitPath, err)
+		}
+	} else {
+		// Load and merge from multiple sources
+		configPaths := p.GetConfigPaths()
+
+		if len(configPaths) == 0 {
+			// No config files found, check for legacy config
+			if legacyPath, found := p.FindLegacyConfig(); found {
+				return LoadFromPath(legacyPath, paths.SourceRepoDefault)
+			}
+			return nil, fmt.Errorf("no configuration file found")
+		}
+
+		// Start with the first (lowest priority) config
+		baseConfig, err = LoadFromPath(configPaths[0], p.GetConfigSource(configPaths[0]))
+		if err != nil {
+			return nil, fmt.Errorf("failed to load base config from %s: %w", configPaths[0], err)
+		}
+
+		// Merge higher priority configs
+		for i := 1; i < len(configPaths); i++ {
+			overrideConfig, err := LoadFromPath(configPaths[i], p.GetConfigSource(configPaths[i]))
+			if err != nil {
+				// Log warning but continue with partial config
+				fmt.Fprintf(os.Stderr, "Warning: failed to load config from %s: %v\n", configPaths[i], err)
+				continue
+			}
+
+			baseConfig = MergeConfigs(baseConfig, overrideConfig)
+		}
+	}
+
+	// Apply environment variable overrides
+	applyEnvOverrides(baseConfig)
+
+	return baseConfig, nil
+}
+
+// MergeConfigs merges two configs, with override taking precedence
+// Only non-empty values from override are applied to base
+func MergeConfigs(base, override *Config) *Config {
+	merged := &Config{
+		Repository:   base.Repository,
+		Preferences:  base.Preferences,
+		Groups:       base.Groups,
+		configSource: base.configSource,
+		configPath:   base.configPath,
+	}
+
+	// Override repository if specified
+	if override.Repository != "" {
+		merged.Repository = override.Repository
+		merged.configSource = override.configSource
+		merged.configPath = override.configPath
+	}
+
+	// Merge preferences
+	if override.Preferences != nil {
+		if merged.Preferences == nil {
+			merged.Preferences = &Preferences{}
+		}
+
+		if override.Preferences.RefreshInterval != 0 {
+			merged.Preferences.RefreshInterval = override.Preferences.RefreshInterval
+		}
+		if override.Preferences.Theme != "" {
+			merged.Preferences.Theme = override.Preferences.Theme
+		}
+		if override.Preferences.Keybindings != "" {
+			merged.Preferences.Keybindings = override.Preferences.Keybindings
+		}
+		if len(override.Preferences.CustomSettings) > 0 {
+			if merged.Preferences.CustomSettings == nil {
+				merged.Preferences.CustomSettings = make(map[string]string)
+			}
+			for k, v := range override.Preferences.CustomSettings {
+				merged.Preferences.CustomSettings[k] = v
+			}
+		}
+	}
+
+	// Override groups if specified (full replacement, not merge)
+	if len(override.Groups) > 0 {
+		merged.Groups = override.Groups
+	}
+
+	return merged
+}
+
+// applyEnvOverrides applies environment variable overrides to the config
+func applyEnvOverrides(config *Config) {
+	// Check for RIVET_REPOSITORY
+	if repo := os.Getenv("RIVET_REPOSITORY"); repo != "" {
+		config.Repository = repo
+		config.configSource = paths.SourceEnvVar
+	}
+
+	// Check for RIVET_REFRESH_INTERVAL
+	if interval := os.Getenv("RIVET_REFRESH_INTERVAL"); interval != "" {
+		var val int
+		if _, err := fmt.Sscanf(interval, "%d", &val); err == nil {
+			config.SetRefreshInterval(val)
+		}
+	}
+
+	// Check for RIVET_PREFERENCES_THEME
+	if theme := os.Getenv("RIVET_PREFERENCES_THEME"); theme != "" {
+		if config.Preferences == nil {
+			config.Preferences = &Preferences{}
+		}
+		config.Preferences.Theme = theme
+	}
+
+	// Check for RIVET_PREFERENCES_KEYBINDINGS
+	if kb := os.Getenv("RIVET_PREFERENCES_KEYBINDINGS"); kb != "" {
+		if config.Preferences == nil {
+			config.Preferences = &Preferences{}
+		}
+		config.Preferences.Keybindings = kb
+	}
 }
 
 func LoadWithViper(path string) (*Config, *viper.Viper, error) {
@@ -111,17 +310,51 @@ func WatchConfig(v *viper.Viper, onConfigChange func(*Config)) {
 }
 
 func (c *Config) Save(path string) error {
+	return c.SaveWithHeader(path, true)
+}
+
+// SaveToUserConfig saves the config to the user's config file
+func (c *Config) SaveToUserConfig(p *paths.Paths) error {
+	if err := p.EnsureDirs(); err != nil {
+		return fmt.Errorf("failed to ensure config directories: %w", err)
+	}
+
+	return c.SaveWithHeader(p.UserConfigFile(), true)
+}
+
+// SaveToRepoDefault saves the config to the repository default location
+func (c *Config) SaveToRepoDefault(p *paths.Paths) error {
+	if p.RepoDefaultConfigPath == "" {
+		return fmt.Errorf("no repository root configured")
+	}
+
+	// Ensure .github directory exists
+	githubDir := filepath.Dir(p.RepoDefaultConfigPath)
+	if err := os.MkdirAll(githubDir, 0755); err != nil {
+		return fmt.Errorf("failed to create .github directory: %w", err)
+	}
+
+	return c.SaveWithHeader(p.RepoDefaultConfigPath, true)
+}
+
+// SaveWithHeader saves the config with an optional header
+func (c *Config) SaveWithHeader(path string, includeHeader bool) error {
 	data, err := yaml.Marshal(c)
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	// Add helpful header comment
-	header := `# Rivet Configuration
+	var fullContent string
+	if includeHeader {
+		header := `# Rivet Configuration
 # Learn more: https://github.com/Cloudsky01/gh-rivet
 #
 # Configuration structure:
 # - repository: GitHub repository in owner/repo format
+# - preferences: User-specific settings (optional)
+#   - refreshInterval: Auto-refresh interval in seconds (0 = disabled)
+#   - theme: Color theme preference
+#   - keybindings: Keybinding style (vim, emacs, etc.)
 # - groups: Organize your workflows into groups
 #   - id: Unique identifier (auto-generated from name)
 #   - name: Display name shown in the TUI
@@ -130,14 +363,24 @@ func (c *Config) Save(path string) error {
 #   - pinnedWorkflows: Workflows to pin to the top
 #   - groups: Nested groups for hierarchical organization
 #
-# Run 'rivet --help' for more information
+# Configuration locations:
+#   User config: ~/.config/rivet/config.yaml (user-specific settings)
+#   Repo default: .github/.rivet.yaml (team-shared defaults, optional)
+#   Project user: .git/.rivet/config.yaml (per-project user overrides)
+#
+# Run 'rivet config --help' for more information
 
 `
-	fullContent := header + string(data)
+		fullContent = header + string(data)
+	} else {
+		fullContent = string(data)
+	}
 
 	if err := os.WriteFile(path, []byte(fullContent), 0644); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
+
+	c.configPath = path
 
 	return nil
 }

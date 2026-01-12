@@ -14,6 +14,7 @@ import (
 	"github.com/Cloudsky01/gh-rivet/internal/config"
 	"github.com/Cloudsky01/gh-rivet/internal/git"
 	"github.com/Cloudsky01/gh-rivet/internal/github"
+	"github.com/Cloudsky01/gh-rivet/internal/paths"
 	"github.com/Cloudsky01/gh-rivet/internal/tui"
 	"github.com/Cloudsky01/gh-rivet/internal/wizard"
 )
@@ -145,8 +146,8 @@ func runView(cmd *cobra.Command, args []string) error {
 
 	// Use CLI flag if provided, otherwise use config value
 	interval := refreshInterval
-	if interval == 0 && cfg.RefreshInterval > 0 {
-		interval = cfg.RefreshInterval
+	if interval == 0 && cfg.GetRefreshInterval() > 0 {
+		interval = cfg.GetRefreshInterval()
 	}
 
 	opts := tui.MenuOptions{
@@ -232,11 +233,36 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("wizard failed: %w", err)
 	}
 
-	if err := cfg.Save(configPath); err != nil {
-		return fmt.Errorf("failed to save configuration: %w", err)
+	// Determine save location based on wizard choice
+	var savePath string
+	configType := w.GetConfigType()
+
+	if configType == "user" {
+		// Save to user config
+		projectRoot, _ := git.GetGitRepositoryRoot()
+		var p *paths.Paths
+		if projectRoot != "" {
+			p, err = paths.NewWithProject(projectRoot)
+		} else {
+			p, err = paths.New()
+		}
+		if err != nil {
+			return fmt.Errorf("failed to initialize paths: %w", err)
+		}
+
+		if err := cfg.SaveToUserConfig(p); err != nil {
+			return fmt.Errorf("failed to save user configuration: %w", err)
+		}
+		savePath = p.UserConfigFile()
+	} else {
+		// Save to team config (legacy path)
+		if err := cfg.Save(configPath); err != nil {
+			return fmt.Errorf("failed to save configuration: %w", err)
+		}
+		savePath = configPath
 	}
 
-	printSuccessSummary(configPath, cfg)
+	printSuccessSummary(savePath, cfg)
 	return nil
 }
 

@@ -8,6 +8,33 @@ import (
 	"strings"
 )
 
+// GetGitRepositoryRoot finds the root directory of the current git repository
+// Returns the absolute path to the repository root, or an error if not in a git repository
+func GetGitRepositoryRoot() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("failed to get current working directory: %w", err)
+	}
+
+	// Search up to 10 levels deep
+	for range 10 {
+		gitDir := filepath.Join(cwd, ".git")
+
+		if info, err := os.Stat(gitDir); err == nil && info.IsDir() {
+			return cwd, nil
+		}
+
+		parent := filepath.Dir(cwd)
+		if parent == cwd {
+			// Reached filesystem root
+			break
+		}
+		cwd = parent
+	}
+
+	return "", fmt.Errorf("not in a git repository")
+}
+
 // DetectRepository attempts to detect the GitHub repository from .git/config
 // Returns the repository in owner/repo format, or an error if detection fails
 func DetectRepository() (string, error) {

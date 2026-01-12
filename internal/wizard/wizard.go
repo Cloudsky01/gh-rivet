@@ -26,6 +26,7 @@ type Wizard struct {
 	groups             []GroupBuilder
 	configPath         string
 	repository         string
+	configType         string // "user" or "team"
 }
 
 func getASCIIArt() string {
@@ -58,6 +59,11 @@ func (w *Wizard) Run() (*config.Config, error) {
 
 	w.printWelcome()
 
+	// Prompt for config type (user vs team)
+	if err := w.promptConfigType(); err != nil {
+		return nil, err
+	}
+
 	if w.repository == "" {
 		if err := w.promptRepository(); err != nil {
 			return nil, err
@@ -80,6 +86,11 @@ func (w *Wizard) Run() (*config.Config, error) {
 	default:
 		return w.createDefaultConfig(), nil
 	}
+}
+
+// GetConfigType returns the config type chosen by the user
+func (w *Wizard) GetConfigType() string {
+	return w.configType
 }
 
 func (w *Wizard) printWelcome() {
@@ -282,6 +293,40 @@ func (w *Wizard) idExists(id string) bool {
 		}
 	}
 	return false
+}
+
+func (w *Wizard) promptConfigType() error {
+	configType := ""
+	err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("💾 Configuration Type").
+				Description("Where should your configuration be saved?").
+				Options(
+					huh.NewOption("User Config (Recommended) - Personal settings in ~/.config/rivet/", "user"),
+					huh.NewOption("Team Config - Shared team defaults in .github/.rivet.yaml", "team"),
+				).
+				Value(&configType),
+		),
+	).Run()
+
+	if err != nil {
+		return err
+	}
+
+	w.configType = configType
+
+	// Show explanation based on choice
+	if configType == "user" {
+		fmt.Println(GetInfoStyle().Render("✓ User Config: Your personal settings, not shared with team"))
+		fmt.Println(GetInfoStyle().Render("  Location: ~/.config/rivet/config.yaml"))
+	} else {
+		fmt.Println(GetInfoStyle().Render("✓ Team Config: Shared defaults for your team"))
+		fmt.Println(GetInfoStyle().Render("  Location: .github/.rivet.yaml"))
+	}
+	fmt.Println()
+
+	return nil
 }
 
 func (w *Wizard) promptRepository() error {
