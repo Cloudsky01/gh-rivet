@@ -72,11 +72,16 @@ type Paths struct {
 
 	// ProjectUserConfigPath is the path to the user's project-specific config (.git/.rivet/config.yaml)
 	ProjectUserConfigPath string
+
+	// usingFallbacks tracks which directories are using fallback locations
+	usingFallbacks map[string]bool
 }
 
 // New creates a new Paths instance with XDG-compliant directories
 func New() (*Paths, error) {
-	p := &Paths{}
+	p := &Paths{
+		usingFallbacks: make(map[string]bool),
+	}
 
 	// Get user config directory (XDG_CONFIG_HOME or ~/.config on Unix, %AppData% on Windows)
 	configDir, err := os.UserConfigDir()
@@ -135,25 +140,105 @@ func (p *Paths) UserStateFile(repoOwner, repoName string) string {
 	return filepath.Join(p.UserStateDir, filename)
 }
 
-// EnsureDirs creates all necessary directories if they don't exist
+// dirSpec defines a directory with its criticality and purpose
+type dirSpec struct {
+	path     *string // pointer to the path field in Paths struct
+	pathName string  // name of the directory (for error messages)
+	critical bool    // if true, app cannot run without it
+	purpose  string  // description of what the directory is for
+}
+
+// EnsureDirs creates all necessary directories if they don't exist.
+// Following XDG Base Directory specification, it:
+// - Attempts to create directories with permission 0700 (as per XDG spec)
+// - Falls back to alternative directories if permission denied
+// - Prints warnings for non-critical directory failures
+// - Only fails if critical directories cannot be created
 func (p *Paths) EnsureDirs() error {
-	dirs := []string{
-		p.UserConfigDir,
-		p.UserStateDir,
-		p.UserCacheDir,
+	// Define directory specifications with criticality
+	specs := []dirSpec{
+		{&p.UserConfigDir, "config", true, "configuration"},
+		{&p.UserStateDir, "state", false, "state storage"},
+		{&p.UserCacheDir, "cache", false, "cache"},
 	}
 
+	var projectDir string
 	if p.ProjectRoot != "" {
-		dirs = append(dirs, filepath.Join(p.ProjectRoot, ".git", AppName))
+		projectDir = filepath.Join(p.ProjectRoot, ".git", AppName)
+		specs = append(specs, dirSpec{&projectDir, "project", false, "project-specific config"})
 	}
 
-	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+	for _, spec := range specs {
+		if err := p.ensureDir(spec); err != nil {
+			if spec.critical {
+				return err
+			}
+			// Non-critical directories: print warning and continue
+			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
 		}
 	}
 
 	return nil
+}
+
+// ensureDir creates a single directory with permission 0700 (XDG spec compliant)
+// If permission denied, attempts to use a fallback location in temp directory
+func (p *Paths) ensureDir(spec dirSpec) error {
+	originalPath := *spec.path
+
+	// Attempt to create the directory with 0700 permissions (XDG spec requirement)
+	if err := os.MkdirAll(originalPath, 0700); err != nil {
+		// Check if this is a permission error
+		if os.IsPermission(err) {
+			// Try fallback for non-critical directories
+			if !spec.critical {
+				if fallbackErr := p.tryFallbackDir(spec, originalPath); fallbackErr == nil {
+					return nil // Successfully using fallback
+				}
+			}
+
+			// Permission error with no successful fallback
+			return p.formatPermissionError(originalPath, spec.purpose, err)
+		}
+
+		// Non-permission error
+		return fmt.Errorf("failed to create %s directory %s: %w", spec.purpose, originalPath, err)
+	}
+
+	return nil
+}
+
+// tryFallbackDir attempts to create a fallback directory in the temp location
+func (p *Paths) tryFallbackDir(spec dirSpec, originalPath string) error {
+	// Create fallback path in temp directory
+	fallbackPath := filepath.Join(os.TempDir(), fmt.Sprintf("%s-%s", AppName, spec.pathName))
+
+	if err := os.MkdirAll(fallbackPath, 0700); err != nil {
+		return fmt.Errorf("fallback directory creation failed: %w", err)
+	}
+
+	// Update the path to use fallback
+	*spec.path = fallbackPath
+	p.usingFallbacks[spec.pathName] = true
+
+	// Print warning as per XDG spec
+	fmt.Fprintf(os.Stderr, "Warning: using fallback %s directory: %s (permission denied for %s)\n",
+		spec.purpose, fallbackPath, originalPath)
+
+	return nil
+}
+
+// formatPermissionError creates a user-friendly permission error message
+func (p *Paths) formatPermissionError(path, purpose string, originalErr error) error {
+	parent := filepath.Dir(path)
+	return fmt.Errorf(
+		"permission denied: cannot create %s directory %s\n\n"+
+			"Possible solutions:\n"+
+			"  1. Fix permissions: sudo chown -R $USER %s\n"+
+			"  2. Set custom location: export XDG_STATE_HOME=/tmp/%s-state\n"+
+			"  3. Check parent directory exists and is writable: %s\n\n"+
+			"Original error: %v",
+		purpose, path, parent, AppName, parent, originalErr)
 }
 
 // FindLegacyConfig searches for legacy config files in order of precedence

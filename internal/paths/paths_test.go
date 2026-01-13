@@ -122,10 +122,11 @@ func TestEnsureDirs(t *testing.T) {
 
 	// Override paths to use temp directory
 	p := &Paths{
-		UserConfigDir: filepath.Join(tmpDir, "config", AppName),
-		UserStateDir:  filepath.Join(tmpDir, "state", AppName),
-		UserCacheDir:  filepath.Join(tmpDir, "cache", AppName),
-		ProjectRoot:   filepath.Join(tmpDir, "project"),
+		UserConfigDir:  filepath.Join(tmpDir, "config", AppName),
+		UserStateDir:   filepath.Join(tmpDir, "state", AppName),
+		UserCacheDir:   filepath.Join(tmpDir, "cache", AppName),
+		ProjectRoot:    filepath.Join(tmpDir, "project"),
+		usingFallbacks: make(map[string]bool),
 	}
 
 	err := p.EnsureDirs()
