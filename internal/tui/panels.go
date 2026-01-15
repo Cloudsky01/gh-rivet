@@ -512,7 +512,6 @@ func (m MenuModel) renderBreadcrumb() string {
 		Render(breadcrumbText)
 }
 
-
 // renderStatusBar renders the refresh status bar
 func (m MenuModel) renderStatusBar() string {
 	if m.refreshInterval <= 0 {
@@ -567,7 +566,7 @@ func (m MenuModel) renderHelpBar() string {
 
 	// Add refresh shortcuts if a workflow is selected and refresh is configured
 	if m.selectedWorkflow != "" && m.refreshInterval > 0 {
-		keys = append(keys, "[Ctrl+R]refresh", "[Ctrl+Shift+R]toggle")
+		keys = append(keys, "[Ctrl+R]refresh", "[Ctrl+T]toggle")
 	}
 
 	helpText := strings.Join(keys, " ")
