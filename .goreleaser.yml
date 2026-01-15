@@ -58,7 +58,7 @@ homebrew_casks:
     repository:
       owner: cloudsky01
       name: homebrew-tap
-      token: "{{ .Env.GITHUB_TOKEN }}"
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     homepage: https://github.com/cloudsky01/gh-rivet
     description: "Interactive TUI for browsing and managing GitHub Actions workflows"
     license: MIT
