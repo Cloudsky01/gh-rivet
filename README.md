@@ -31,10 +31,9 @@ Wraps the [GitHub CLI (`gh`)](https://cli.github.com/) — uses your existing au
 ## Installation
 
 ### Homebrew (macOS/Linux)
-
 ```bash
 brew tap cloudsky01/tap
-brew install --cask rivet
+brew install rivet
 ```
 
 ### Go Install
