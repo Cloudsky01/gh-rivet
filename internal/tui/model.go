@@ -231,15 +231,12 @@ func (m MenuModel) saveState() {
 	}
 
 	if err := s.Save(m.statePath); err != nil {
-		_, err := fmt.Fprintf(os.Stderr, "Warning: failed to save state: %v\n", err)
-		if err != nil {
-			panic(err)
-		}
+		fmt.Fprintf(os.Stderr, "Warning: failed to save state: %v\n", err)
 	}
 }
 
 // startRefreshTicker starts the auto-refresh timer if enabled and interval is valid
-func (m MenuModel) startRefreshTicker() {
+func (m *MenuModel) startRefreshTicker() {
 	if m.refreshInterval <= 0 || !m.autoRefreshEnabled {
 		return
 	}
@@ -249,7 +246,7 @@ func (m MenuModel) startRefreshTicker() {
 }
 
 // stopRefreshTicker stops the auto-refresh timer
-func (m MenuModel) stopRefreshTicker() {
+func (m *MenuModel) stopRefreshTicker() {
 	if m.refreshTicker != nil {
 		m.refreshTicker.Stop()
 		m.refreshTicker = nil
@@ -257,7 +254,7 @@ func (m MenuModel) stopRefreshTicker() {
 }
 
 // getRefreshTickerCmd returns a command that waits for the next refresh tick
-func (m MenuModel) getRefreshTickerCmd() tea.Cmd {
+func (m *MenuModel) getRefreshTickerCmd() tea.Cmd {
 	if m.refreshTicker == nil {
 		return nil
 	}
