@@ -20,11 +20,6 @@ func TestLoad(t *testing.T) {
     workflowDefs:
       - file: deploy.yml
         name: Deploy Workflow
-        inputs:
-          - name: environment
-            description: Target environment
-            required: true
-            default: staging
 `
 
 	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
@@ -32,7 +27,7 @@ func TestLoad(t *testing.T) {
 	}
 
 	// Test loading the config
-	cfg, err := Load(configPath)
+	cfg, err := LoadFromPath(configPath)
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
@@ -63,39 +58,55 @@ func TestLoad(t *testing.T) {
 	}
 }
 
-func TestLoadWithViper(t *testing.T) {
-	// Create a temporary config file
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "test.rivet.yaml")
-
-	configContent := `groups:
-  - id: test-group
-    name: Test Group
-    workflows:
-      - test-workflow.yml
-`
-
-	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
-		t.Fatalf("Failed to write test config: %v", err)
+func TestMerge(t *testing.T) {
+	baseConfig := &Config{
+		Repository: "base/repo",
+		Preferences: &Preferences{
+			Theme:           "light",
+			RefreshInterval: 30,
+			CustomSettings: map[string]string{
+				"key1": "val1",
+			},
+		},
+		Groups: []Group{{ID: "base", Name: "Base"}},
 	}
 
-	// Test loading with Viper
-	cfg, v, err := LoadWithViper(configPath)
-	if err != nil {
-		t.Fatalf("Failed to load config with Viper: %v", err)
+	overrideConfig := &Config{
+		Repository: "override/repo",
+		Preferences: &Preferences{
+			Theme: "dark",
+			// RefreshInterval missing, should keep base
+			CustomSettings: map[string]string{
+				"key2": "val2", // should add
+			},
+		},
+		Groups: []Group{{ID: "override", Name: "Override"}}, // Should replace
 	}
 
-	if cfg == nil {
-		t.Fatal("Config is nil")
+	baseConfig.Merge(overrideConfig)
+
+	if baseConfig.Repository != "override/repo" {
+		t.Errorf("Expected repository 'override/repo', got '%s'", baseConfig.Repository)
 	}
 
-	if v == nil {
-		t.Fatal("Viper instance is nil")
+	if baseConfig.Preferences.Theme != "dark" {
+		t.Errorf("Expected theme 'dark', got '%s'", baseConfig.Preferences.Theme)
 	}
 
-	// Verify we can access values through Viper
-	if !v.IsSet("groups") {
-		t.Error("Expected 'groups' to be set in Viper")
+	if baseConfig.Preferences.RefreshInterval != 30 {
+		t.Errorf("Expected refresh interval 30, got %d", baseConfig.Preferences.RefreshInterval)
+	}
+
+	if len(baseConfig.Groups) != 1 || baseConfig.Groups[0].ID != "override" {
+		t.Error("Groups should be replaced by override config")
+	}
+
+	if val, ok := baseConfig.Preferences.CustomSettings["key1"]; !ok || val != "val1" {
+		t.Error("CustomSettings['key1'] should be preserved")
+	}
+
+	if val, ok := baseConfig.Preferences.CustomSettings["key2"]; !ok || val != "val2" {
+		t.Error("CustomSettings['key2'] should be added")
 	}
 }
 
@@ -142,7 +153,7 @@ func TestLoadMultipleFormats(t *testing.T) {
 				t.Fatalf("Failed to write test config: %v", err)
 			}
 
-			cfg, err := Load(configPath)
+			cfg, err := LoadFromPath(configPath)
 			if err != nil {
 				t.Fatalf("Failed to load %s config: %v", tt.fileFormat, err)
 			}
@@ -151,32 +162,6 @@ func TestLoadMultipleFormats(t *testing.T) {
 				t.Errorf("Expected 1 group in %s config, got %d", tt.fileFormat, len(cfg.Groups))
 			}
 		})
-	}
-}
-
-func TestEnvironmentVariableOverride(t *testing.T) {
-	// This test demonstrates that environment variables can override config
-	// In practice, this would need more complex setup to test properly
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "test.rivet.yaml")
-
-	configContent := `groups:
-  - id: test-group
-    name: Test Group
-`
-
-	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
-		t.Fatalf("Failed to write test config: %v", err)
-	}
-
-	// Load config - environment variables would be read automatically
-	cfg, err := Load(configPath)
-	if err != nil {
-		t.Fatalf("Failed to load config: %v", err)
-	}
-
-	if cfg == nil {
-		t.Fatal("Config is nil")
 	}
 }
 

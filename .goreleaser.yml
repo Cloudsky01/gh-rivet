@@ -17,6 +17,10 @@ builds:
       - arm64
     main: ./cmd/rivet
     binary: rivet
+    ldflags:
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
 
 archives:
   - id: rivet

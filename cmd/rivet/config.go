@@ -69,9 +69,12 @@ func init() {
 	configCmd.AddCommand(configShowCmd)
 	configCmd.AddCommand(configEditCmd)
 	configCmd.AddCommand(configResetCmd)
+
+	// Add --config flag to config show subcommand
+	configShowCmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to configuration file (default: auto-detect)")
 }
 
-func runConfigPath(cmd *cobra.Command, args []string) error {
+func runConfigPath(_ *cobra.Command, _ []string) error {
 	// Detect project root
 	projectRoot, _ := git.GetGitRepositoryRoot()
 
@@ -123,16 +126,44 @@ func runConfigPath(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runConfigShow(cmd *cobra.Command, args []string) error {
-	// Try to load config from the given path
-	cfg, err := config.Load(configPath)
+func runConfigShow(cmd *cobra.Command, _ []string) error {
+	var cfg *config.Config
+	var loadPath string
+	var err error
+
+	// If an explicit config path provided, use it
+	if cmd.Flags().Changed("config") && configPath != "" {
+		cfg, err = config.LoadMerged([]string{configPath})
+		loadPath = configPath
+	} else {
+		// Use precedence system
+		projectRoot, _ := git.GetGitRepositoryRoot()
+		var p *paths.Paths
+		if projectRoot != "" {
+			p, err = paths.NewWithProject(projectRoot)
+		} else {
+			p, err = paths.New()
+		}
+		if err != nil {
+			return fmt.Errorf("failed to initialize paths: %w", err)
+		}
+
+		configPaths := p.GetConfigPaths()
+		if len(configPaths) == 0 {
+			return fmt.Errorf("no configuration found. Run 'rivet init' first")
+		}
+
+		loadPath = configPaths[len(configPaths)-1]
+		cfg, err = config.LoadMerged(configPaths)
+	}
+
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
 	fmt.Println("Configuration")
 	fmt.Println("════════════════════════════════════════════════════════════")
-	fmt.Printf("Path:   %s\n", cfg.GetConfigPath())
+	fmt.Printf("Path:   %s\n", loadPath)
 	fmt.Println()
 
 	// Marshal and display config
@@ -146,7 +177,7 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runConfigEdit(cmd *cobra.Command, args []string) error {
+func runConfigEdit(cmd *cobra.Command, _ []string) error {
 	// Create paths
 	p, err := paths.New()
 	if err != nil {
@@ -155,12 +186,12 @@ func runConfigEdit(cmd *cobra.Command, args []string) error {
 
 	userConfigPath := p.UserConfigFile()
 
-	// Ensure config directory exists
+	// Ensure the config directory exists
 	if err := p.EnsureDirs(); err != nil {
 		return fmt.Errorf("failed to ensure config directory: %w", err)
 	}
 
-	// Create default config if it doesn't exist
+	// Create the default config if it doesn't exist
 	if !fileExists(userConfigPath) {
 		fmt.Printf("Creating new user config at: %s\n", userConfigPath)
 
@@ -176,6 +207,13 @@ func runConfigEdit(cmd *cobra.Command, args []string) error {
 			Repository: repository,
 			Preferences: &config.Preferences{
 				RefreshInterval: 30,
+			},
+			Groups: []config.Group{
+				{
+					ID:          "workflows",
+					Name:        "Workflows",
+					Description: "All workflows",
+				},
 			},
 		}
 
@@ -216,7 +254,7 @@ func runConfigEdit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runConfigReset(cmd *cobra.Command, args []string) error {
+func runConfigReset(_ *cobra.Command, _ []string) error {
 	// Create paths
 	p, err := paths.New()
 	if err != nil {

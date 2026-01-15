@@ -26,13 +26,14 @@ var (
 )
 
 var (
-	configPath       string
-	repo             string
-	force            bool
-	statePath        string
-	noState          bool
-	timeoutSeconds   int
-	refreshInterval  int
+	configPath      string
+	repo            string
+	force           bool
+	reset           bool
+	statePath       string
+	noState         bool
+	timeoutSeconds  int
+	refreshInterval int
 
 	rootCmd = &cobra.Command{
 		Use:   "rivet",
@@ -63,7 +64,7 @@ Get started:  rivet init`,
 )
 
 func init() {
-	rootCmd.Flags().StringVarP(&configPath, "config", "c", ".github/.rivet.yaml", "Path to configuration file")
+	rootCmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to configuration file (default: auto-detect)")
 	rootCmd.Flags().StringVarP(&repo, "repo", "r", "", "Repository (owner/repo format)")
 	rootCmd.Flags().StringVar(&statePath, "state", "", "Path to state file")
 	rootCmd.Flags().BoolVar(&noState, "no-state", false, "Disable state persistence")
@@ -86,11 +87,12 @@ func init() {
 		originalInitHelpFunc(cmd, args)
 	})
 
-	initCmd.Flags().StringVarP(&configPath, "config", "c", ".github/.rivet.yaml", "Path to configuration file")
+	initCmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to save configuration file (default: user config)")
 	initCmd.Flags().BoolVarP(&force, "force", "f", false, "Overwrite existing config")
+	initCmd.Flags().BoolVar(&reset, "reset", false, "Delete existing config and create new one")
 	initCmd.Flags().StringVarP(&repo, "repo", "r", "", "Repository (owner/repo) to fetch workflows from")
 
-	updateRepoCmd.Flags().StringVarP(&configPath, "config", "c", ".github/.rivet.yaml", "Path to configuration file")
+	updateRepoCmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to configuration file (default: auto-detect)")
 
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(updateRepoCmd)
@@ -110,21 +112,56 @@ func checkGitHubCLI() error {
 	return nil
 }
 
-func runView(cmd *cobra.Command, args []string) error {
+func runView(cmd *cobra.Command, _ []string) error {
 	if err := checkGitHubCLI(); err != nil {
 		return err
 	}
 
-	cfg, err := config.Load(configPath)
+	// If a config path was explicitly provided via CLI flag, use it directly
+	if cmd.Flags().Changed("config") {
+		cfg, err := config.LoadMerged([]string{configPath})
+		if err != nil {
+			return fmt.Errorf("failed to load config from %s: %w", configPath, err)
+		}
+		if err := cfg.Validate(); err != nil {
+			return fmt.Errorf("invalid configuration: %w", err)
+		}
+		return runViewWithConfig(cfg, configPath)
+	}
+
+	// Otherwise, use the proper precedence system
+	projectRoot, _ := git.GetGitRepositoryRoot()
+	var p *paths.Paths
+	var err error
+	if projectRoot != "" {
+		p, err = paths.NewWithProject(projectRoot)
+	} else {
+		p, err = paths.New()
+	}
 	if err != nil {
-		// Config file doesn't exist or couldn't be parsed
-		return handleMissingConfig(configPath)
+		return fmt.Errorf("failed to initialize paths: %w", err)
 	}
 
-	if err := cfg.Validate(); err != nil {
-		return fmt.Errorf("invalid configuration: %w", err)
+	// Load and merge all available configs
+	configPaths := p.GetConfigPaths()
+	if len(configPaths) > 0 {
+		cfg, err := config.LoadMerged(configPaths)
+		if err != nil {
+			return fmt.Errorf("failed to load configuration: %w", err)
+		}
+		if err := cfg.Validate(); err != nil {
+			return fmt.Errorf("invalid configuration: %w", err)
+		}
+		// Use the last loaded path as the primary config path for display/save purposes
+		primaryPath := configPaths[len(configPaths)-1]
+		return runViewWithConfig(cfg, primaryPath)
 	}
 
+	// No config found, trigger init flow
+	return handleMissingConfig()
+}
+
+func runViewWithConfig(cfg *config.Config, configPath string) error {
 	// Use --repo flag if provided, otherwise use config repository
 	if repo == "" {
 		repo = cfg.Repository
@@ -164,9 +201,42 @@ func runView(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runInit(cmd *cobra.Command, args []string) error {
-	if _, err := os.Stat(configPath); err == nil && !force {
-		return fmt.Errorf("configuration file %s already exists. Use --force to overwrite", configPath)
+func runInit(cmd *cobra.Command, _ []string) error {
+	// Initialize paths first - we'll need this throughout
+	projectRoot, _ := git.GetGitRepositoryRoot()
+	var p *paths.Paths
+	var err error
+	if projectRoot != "" {
+		p, err = paths.NewWithProject(projectRoot)
+	} else {
+		p, err = paths.New()
+	}
+	if err != nil {
+		return fmt.Errorf("failed to initialize paths: %w", err)
+	}
+
+	// Determine if user explicitly provided a config path via CLI
+	explicitConfigPath := cmd != nil && cmd.Flags().Changed("config")
+
+	// Determine save path early - default to user config
+	savePath := p.UserConfigFile()
+	if explicitConfigPath && configPath != "" {
+		savePath = configPath
+	}
+
+	// Handle --reset flag: delete existing config first
+	if reset {
+		if _, err := os.Stat(savePath); err == nil {
+			if err := os.Remove(savePath); err != nil {
+				return fmt.Errorf("failed to remove existing config at %s: %w", savePath, err)
+			}
+			fmt.Println(infoStyle.Render("Removed existing config: " + savePath))
+		}
+	}
+
+	// Check if config already exists (unless --force or --reset)
+	if _, err := os.Stat(savePath); err == nil && !force && !reset {
+		return fmt.Errorf("configuration file %s already exists. Use --force to overwrite or --reset to start fresh", savePath)
 	}
 
 	var workflows []string
@@ -218,10 +288,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(workflows) == 0 {
-		return handleNoWorkflows(configPath, repo, useRemoteWorkflows)
+		return handleNoWorkflows(p, repo, useRemoteWorkflows)
 	}
 
-	w := wizard.New(workflows, configPath)
+	w := wizard.New(workflows, savePath)
 
 	// Set repository if using remote workflows
 	if useRemoteWorkflows {
@@ -233,14 +303,28 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("wizard failed: %w", err)
 	}
 
-	// Determine save location based on wizard choice
-	var savePath string
-	configType := w.GetConfigType()
+	// Ensure directories exist and save
+	if err := p.EnsureDirs(); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
 
-	if configType == "user" {
-		// Save to user config
+	if err := cfg.Save(savePath); err != nil {
+		return fmt.Errorf("failed to save configuration: %w", err)
+	}
+
+	printSuccessSummary(savePath, cfg)
+	return nil
+}
+
+func runUpdateRepo(cmd *cobra.Command, args []string) error {
+	// Auto-detect config path if not explicitly provided
+	var actualConfigPath string
+	if cmd.Flags().Changed("config") {
+		actualConfigPath = configPath
+	} else {
 		projectRoot, _ := git.GetGitRepositoryRoot()
 		var p *paths.Paths
+		var err error
 		if projectRoot != "" {
 			p, err = paths.NewWithProject(projectRoot)
 		} else {
@@ -250,26 +334,16 @@ func runInit(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to initialize paths: %w", err)
 		}
 
-		if err := cfg.SaveToUserConfig(p); err != nil {
-			return fmt.Errorf("failed to save user configuration: %w", err)
+		configPaths := p.GetConfigPaths()
+		if len(configPaths) == 0 {
+			return fmt.Errorf("no configuration found. Run 'rivet init' first")
 		}
-		savePath = p.UserConfigFile()
-	} else {
-		// Save to team config (legacy path)
-		if err := cfg.Save(configPath); err != nil {
-			return fmt.Errorf("failed to save configuration: %w", err)
-		}
-		savePath = configPath
+		actualConfigPath = configPaths[len(configPaths)-1]
 	}
 
-	printSuccessSummary(savePath, cfg)
-	return nil
-}
-
-func runUpdateRepo(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Load(configPath)
+	cfg, err := config.LoadFromPath(actualConfigPath)
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		return fmt.Errorf("failed to load config from %s: %w", actualConfigPath, err)
 	}
 
 	var newRepo string
@@ -304,12 +378,12 @@ func runUpdateRepo(cmd *cobra.Command, args []string) error {
 	cfg.Repository = newRepo
 
 	// Save updated config
-	if err := cfg.Save(configPath); err != nil {
+	if err := cfg.Save(actualConfigPath); err != nil {
 		return fmt.Errorf("failed to save configuration: %w", err)
 	}
 
 	fmt.Println(successStyle.Render("✓ Repository updated to: " + newRepo))
-	fmt.Println(infoStyle.Render("Configuration saved to: " + configPath))
+	fmt.Println(infoStyle.Render("Configuration saved to: " + actualConfigPath))
 
 	return nil
 }

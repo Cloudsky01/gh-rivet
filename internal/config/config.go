@@ -6,11 +6,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strings"
 
 	"github.com/Cloudsky01/gh-rivet/internal/paths"
-	"github.com/fsnotify/fsnotify"
-	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 )
 
@@ -28,7 +25,7 @@ type Config struct {
 	Groups      []Group      `yaml:"groups,omitempty"`
 
 	// Internal fields (not serialized)
-	configPath string `yaml:"-"` // Path to the config file
+	configPath string `yaml:"-"` // Path to the last loaded config file
 }
 
 // GetRefreshInterval returns the refresh interval from preferences
@@ -76,35 +73,33 @@ type Group struct {
 	PinnedWorkflows  []string   `yaml:"pinnedWorkflows,omitempty"`
 }
 
-// Load loads a config file from a single path (legacy function, kept for backward compatibility)
-func Load(path string) (*Config, error) {
-	v := viper.New()
+// LoadMerged loads and merges configuration from multiple paths.
+// Paths should be provided in order of precedence (lowest to highest).
+// Later configs overwrite earlier ones.
+func LoadMerged(paths []string) (*Config, error) {
+	config := &Config{}
+	loaded := false
 
-	if path != "" {
-		v.SetConfigFile(path)
-	} else {
-		v.SetConfigName(".rivet")
-		v.SetConfigType("yaml")
-		v.AddConfigPath(".")
-		v.AddConfigPath("$HOME")
+	for _, path := range paths {
+		if _, err := os.Stat(path); err != nil {
+			continue // Skip missing files
+		}
+
+		c, err := LoadFromPath(path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load config from %s: %w", path, err)
+		}
+
+		config.Merge(c)
+		config.configPath = path // Track the last loaded file as the primary path
+		loaded = true
 	}
 
-	v.SetEnvPrefix("RIVET")
-	v.AutomaticEnv()
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-
-	if err := v.ReadInConfig(); err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
+	if !loaded {
+		return nil, fmt.Errorf("no configuration files found")
 	}
 
-	var config Config
-	if err := v.Unmarshal(&config); err != nil {
-		return nil, fmt.Errorf("failed to parse config: %w", err)
-	}
-
-	config.configPath = v.ConfigFileUsed()
-
-	return &config, nil
+	return config, nil
 }
 
 // LoadFromPath loads a config from a specific path
@@ -124,44 +119,43 @@ func LoadFromPath(path string) (*Config, error) {
 	return &config, nil
 }
 
-func LoadWithViper(path string) (*Config, *viper.Viper, error) {
-	v := viper.New()
-
-	if path != "" {
-		v.SetConfigFile(path)
-	} else {
-		v.SetConfigName(".rivet")
-		v.SetConfigType("yaml")
-		v.AddConfigPath(".")
-		v.AddConfigPath("$HOME")
+// Merge merges another config into this one.
+// Fields from 'other' take precedence over this config.
+func (c *Config) Merge(other *Config) {
+	if other.Repository != "" {
+		c.Repository = other.Repository
 	}
 
-	v.SetEnvPrefix("RIVET")
-	v.AutomaticEnv()
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-
-	if err := v.ReadInConfig(); err != nil {
-		return nil, nil, fmt.Errorf("failed to read config file: %w", err)
-	}
-
-	var config Config
-	if err := v.Unmarshal(&config); err != nil {
-		return nil, nil, fmt.Errorf("failed to parse config: %w", err)
-	}
-
-	return &config, v, nil
-}
-
-func WatchConfig(v *viper.Viper, onConfigChange func(*Config)) {
-	v.OnConfigChange(func(e fsnotify.Event) {
-		var newConfig Config
-		if err := v.Unmarshal(&newConfig); err != nil {
-			fmt.Fprintf(os.Stderr, "Error reloading config: %v\n", err)
-			return
+	// Merge Preferences
+	if other.Preferences != nil {
+		if c.Preferences == nil {
+			c.Preferences = &Preferences{}
 		}
-		onConfigChange(&newConfig)
-	})
-	v.WatchConfig()
+		if other.Preferences.RefreshInterval != 0 {
+			c.Preferences.RefreshInterval = other.Preferences.RefreshInterval
+		}
+		if other.Preferences.Theme != "" {
+			c.Preferences.Theme = other.Preferences.Theme
+		}
+		if other.Preferences.Keybindings != "" {
+			c.Preferences.Keybindings = other.Preferences.Keybindings
+		}
+		// Merge CustomSettings
+		if other.Preferences.CustomSettings != nil {
+			if c.Preferences.CustomSettings == nil {
+				c.Preferences.CustomSettings = make(map[string]string)
+			}
+			for k, v := range other.Preferences.CustomSettings {
+				c.Preferences.CustomSettings[k] = v
+			}
+		}
+	}
+
+	// Groups are replaced, not merged, to avoid duplication and confusion
+	// If a config defines groups, it overrides previous groups completely
+	if len(other.Groups) > 0 {
+		c.Groups = other.Groups
+	}
 }
 
 func (c *Config) Save(path string) error {

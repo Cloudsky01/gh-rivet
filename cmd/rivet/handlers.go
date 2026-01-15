@@ -7,6 +7,7 @@ import (
 
 	"github.com/Cloudsky01/gh-rivet/internal/config"
 	"github.com/Cloudsky01/gh-rivet/internal/git"
+	"github.com/Cloudsky01/gh-rivet/internal/paths"
 	"github.com/Cloudsky01/gh-rivet/internal/wizard"
 )
 
@@ -18,7 +19,6 @@ var (
 	dividerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	asciiStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("99"))
 )
-
 
 func printSuccessSummary(configPath string, cfg *config.Config) {
 	divider := dividerStyle.Render("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -46,7 +46,7 @@ func printSuccessSummary(configPath string, cfg *config.Config) {
 	fmt.Println()
 }
 
-func handleMissingConfig(configPath string) error {
+func handleMissingConfig() error {
 	detectedRepo, _ := git.DetectRepository()
 
 	if detectedRepo != "" && wizard.IsTTY() {
@@ -61,12 +61,14 @@ func handleMissingConfig(configPath string) error {
 		}
 
 		if shouldCreate {
+			// Set the global repo variable so runInit uses it
 			repo = detectedRepo
+			// runInit handles nil cmd gracefully and will use user config as default
 			return runInit(nil, nil)
 		}
 	}
 
-	fmt.Println(wizard.GetWarnStyle().Render("⚠ No configuration file found at " + configPath))
+	fmt.Println(wizard.GetWarnStyle().Render("⚠ No configuration file found"))
 	fmt.Println()
 	fmt.Println(headerStyle.Render("To get started, run:"))
 	fmt.Println(infoStyle.Render("  rivet init"))
@@ -127,7 +129,7 @@ func handleNoLocalWorkflows() error {
 	return nil
 }
 
-func handleNoWorkflows(configPath, targetRepo string, useRemoteWorkflows bool) error {
+func handleNoWorkflows(p *paths.Paths, targetRepo string, useRemoteWorkflows bool) error {
 	fmt.Println()
 	fmt.Println(wizard.GetWarnStyle().Render("⚠ No workflow files found"))
 	fmt.Println()
@@ -182,10 +184,16 @@ func handleNoWorkflows(configPath, targetRepo string, useRemoteWorkflows bool) e
 		},
 	}
 
-	if err := cfg.Save(configPath); err != nil {
+	// Ensure directories exist
+	if err := p.EnsureDirs(); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	savePath := p.UserConfigFile()
+	if err := cfg.Save(savePath); err != nil {
 		return fmt.Errorf("failed to save configuration: %w", err)
 	}
 
-	printSuccessSummary(configPath, cfg)
+	printSuccessSummary(savePath, cfg)
 	return nil
 }
