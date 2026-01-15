@@ -71,7 +71,20 @@ rivet update-repo owner/repo
 
 ## Configuration
 
-`rivet init` creates a `.rivet.yaml` file. Commit it to share the structure with your team.
+`rivet init` walks you through grouping workflows and choosing where to save the config.
+Pick a user-specific config (`~/.config/rivet/config.yaml`) for personal prefs or save to `.github/.rivet.yaml` to share with your team.
+
+### Configuration Precedence & Merging
+
+Rivet loads configuration from multiple sources and merges them. The order of precedence (lowest to highest) is:
+
+1.  **Repository Default**: `.github/.rivet.yaml` (Shared team defaults)
+2.  **User Global**: `~/.config/rivet/config.yaml` (Your personal preferences)
+3.  **Project User**: `.git/.rivet/config.yaml` (Your per-project overrides)
+
+**Merging Logic:**
+*   **Preferences**: Merged. You can set a global theme in your User Global config, and it will apply to all projects unless overridden.
+*   **Groups**: Replaced. If a higher-precedence config defines `groups`, it completely replaces the groups from lower-precedence configs. This prevents messy merging of workflow lists.
 
 **Example:**
 ```yaml

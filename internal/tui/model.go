@@ -104,18 +104,18 @@ func NewMenuModel(cfg *config.Config, configPath string, gh *github.Client, opts
 	pinnedList := createPinnedList(cfg)
 
 	m := MenuModel{
-		config:        cfg,
-		configPath:    configPath,
-		statePath:     statePath,
-		gh:            gh,
-		viewState:     browsingGroups,
-		groupPath:     []*config.Group{},
-		list:          l,
-		pinnedList:    pinnedList,
-		activePanel:   NavigationPanel, // Default to navigation panel
-		showRunsPanel: false,
-		tablePageSize: 10,
-		refreshInterval: opts.RefreshInterval,
+		config:             cfg,
+		configPath:         configPath,
+		statePath:          statePath,
+		gh:                 gh,
+		viewState:          browsingGroups,
+		groupPath:          []*config.Group{},
+		list:               l,
+		pinnedList:         pinnedList,
+		activePanel:        NavigationPanel, // Default to navigation panel
+		showRunsPanel:      false,
+		tablePageSize:      10,
+		refreshInterval:    opts.RefreshInterval,
 		autoRefreshEnabled: opts.RefreshInterval > 0,
 	}
 
@@ -154,7 +154,7 @@ func RunMenu(m MenuModel) error {
 	return nil
 }
 
-func (m *MenuModel) restoreState(s *state.NavigationState) {
+func (m MenuModel) restoreState(s *state.NavigationState) {
 	if len(s.GroupPath) > 0 {
 		resolvedPath, ok := state.ResolveGroupPath(m.config, s.GroupPath)
 		if ok && len(resolvedPath) > 0 {
@@ -212,7 +212,7 @@ func (m *MenuModel) restoreState(s *state.NavigationState) {
 	}
 }
 
-func (m *MenuModel) saveState() {
+func (m MenuModel) saveState() {
 	s := &state.NavigationState{
 		GroupPath:       state.ExtractGroupIDs(m.groupPath),
 		ListIndex:       m.list.Index(),
@@ -231,12 +231,15 @@ func (m *MenuModel) saveState() {
 	}
 
 	if err := s.Save(m.statePath); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to save state: %v\n", err)
+		_, err := fmt.Fprintf(os.Stderr, "Warning: failed to save state: %v\n", err)
+		if err != nil {
+			panic(err)
+		}
 	}
 }
 
 // startRefreshTicker starts the auto-refresh timer if enabled and interval is valid
-func (m *MenuModel) startRefreshTicker() {
+func (m MenuModel) startRefreshTicker() {
 	if m.refreshInterval <= 0 || !m.autoRefreshEnabled {
 		return
 	}
@@ -246,7 +249,7 @@ func (m *MenuModel) startRefreshTicker() {
 }
 
 // stopRefreshTicker stops the auto-refresh timer
-func (m *MenuModel) stopRefreshTicker() {
+func (m MenuModel) stopRefreshTicker() {
 	if m.refreshTicker != nil {
 		m.refreshTicker.Stop()
 		m.refreshTicker = nil
@@ -254,7 +257,7 @@ func (m *MenuModel) stopRefreshTicker() {
 }
 
 // getRefreshTickerCmd returns a command that waits for the next refresh tick
-func (m *MenuModel) getRefreshTickerCmd() tea.Cmd {
+func (m MenuModel) getRefreshTickerCmd() tea.Cmd {
 	if m.refreshTicker == nil {
 		return nil
 	}

@@ -10,7 +10,6 @@ func (m MenuModel) View() string {
 	return m.renderMultiPanelLayout()
 }
 
-
 func (m MenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -72,6 +71,8 @@ func (m MenuModel) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.updateSidebarPanel(msg)
 		case NavigationPanel:
 			return m.updateNavigationPanel(msg)
+		default:
+			panic("unhandled default case")
 		}
 	}
 
@@ -113,7 +114,7 @@ func (m MenuModel) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "ctrl+shift+r":
+	case "ctrl+t":
 		// Toggle auto-refresh
 		if m.refreshInterval > 0 {
 			m.autoRefreshEnabled = !m.autoRefreshEnabled
@@ -303,6 +304,26 @@ func (m MenuModel) updateNavigationPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		filteredItems := filterNavigationItems(allItems, m.navigationFilterInput)
 
 		switch msg.String() {
+		case "p":
+			if len(m.groupPath) == 0 {
+				return m, nil
+			}
+			if m.navigationFilteredIndex < len(filteredItems) {
+				selectedItem, ok := filteredItems[m.navigationFilteredIndex].(listItem)
+				if ok && !selectedItem.isGroup {
+					currentGroup := m.groupPath[len(m.groupPath)-1]
+					currentGroup.TogglePin(selectedItem.workflowName)
+
+					if err := m.config.Save(m.configPath); err != nil {
+						m.err = fmt.Errorf("failed to save config: %w", err)
+					}
+
+					m.list.SetItems(buildListItems(m.config, m.groupPath))
+					m.pinnedList.SetItems(buildPinnedListItems(m.config))
+					m.saveState()
+				}
+			}
+			return m, nil
 		case "esc":
 			// Clear filter
 			m.navigationFilterInput = ""
@@ -508,6 +529,8 @@ func (m MenuModel) updateActiveComponent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.list, cmd = m.list.Update(msg)
 	case RunsPanel:
 		m.table, cmd = m.table.Update(msg)
+	default:
+		panic("unhandled default case")
 	}
 
 	return m, cmd

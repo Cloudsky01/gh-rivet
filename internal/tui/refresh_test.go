@@ -33,31 +33,20 @@ func TestAutoRefreshToggle(t *testing.T) {
 		t.Error("Expected autoRefreshEnabled to be true initially when RefreshInterval > 0")
 	}
 
-	// Simulate Ctrl+Shift+R key press to toggle
-	keyMsg := tea.KeyMsg{Type: tea.KeyCtrlBackslash} // We'll test with the handler
-	updatedModel, cmd := m.handleKeyPress(tea.KeyMsg{
-		Type: tea.KeyRunes,
-		Runes: []rune{},
-		Alt: false,
-	})
+	key := tea.KeyMsg{Type: tea.KeyCtrlT}
+	updatedModel, _ := m.handleKeyPress(key)
+	updated := updatedModel.(MenuModel)
 
-	// Directly test the toggle logic
-	m.autoRefreshEnabled = !m.autoRefreshEnabled
-
-	if m.autoRefreshEnabled {
+	if updated.autoRefreshEnabled {
 		t.Error("Expected autoRefreshEnabled to be false after toggle")
 	}
 
-	// Toggle again
-	m.autoRefreshEnabled = !m.autoRefreshEnabled
+	updatedModel, _ = updated.handleKeyPress(key)
+	updated = updatedModel.(MenuModel)
 
-	if !m.autoRefreshEnabled {
+	if !updated.autoRefreshEnabled {
 		t.Error("Expected autoRefreshEnabled to be true after second toggle")
 	}
-
-	_ = updatedModel
-	_ = cmd
-	_ = keyMsg
 }
 
 func TestStartRefreshTicker(t *testing.T) {

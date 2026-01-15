@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -218,25 +219,10 @@ func runInit(cmd *cobra.Command, _ []string) error {
 	// Determine if user explicitly provided a config path via CLI
 	explicitConfigPath := cmd != nil && cmd.Flags().Changed("config")
 
-	// Determine save path early - default to user config
-	savePath := p.UserConfigFile()
+	// Use current best guess for save path - the wizard may change this later.
+	savePathHint := p.UserConfigFile()
 	if explicitConfigPath && configPath != "" {
-		savePath = configPath
-	}
-
-	// Handle --reset flag: delete existing config first
-	if reset {
-		if _, err := os.Stat(savePath); err == nil {
-			if err := os.Remove(savePath); err != nil {
-				return fmt.Errorf("failed to remove existing config at %s: %w", savePath, err)
-			}
-			fmt.Println(infoStyle.Render("Removed existing config: " + savePath))
-		}
-	}
-
-	// Check if config already exists (unless --force or --reset)
-	if _, err := os.Stat(savePath); err == nil && !force && !reset {
-		return fmt.Errorf("configuration file %s already exists. Use --force to overwrite or --reset to start fresh", savePath)
+		savePathHint = configPath
 	}
 
 	var workflows []string
@@ -291,7 +277,7 @@ func runInit(cmd *cobra.Command, _ []string) error {
 		return handleNoWorkflows(p, repo, useRemoteWorkflows)
 	}
 
-	w := wizard.New(workflows, savePath)
+	w := wizard.New(workflows, savePathHint)
 
 	// Set repository if using remote workflows
 	if useRemoteWorkflows {
@@ -303,16 +289,49 @@ func runInit(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("wizard failed: %w", err)
 	}
 
-	// Ensure directories exist and save
-	if err := p.EnsureDirs(); err != nil {
-		return fmt.Errorf("failed to create config directory: %w", err)
+	targetPath, location, err := determineConfigSaveTarget(p, explicitConfigPath, configPath, w.GetConfigType())
+	if err != nil {
+		return err
 	}
 
-	if err := cfg.Save(savePath); err != nil {
-		return fmt.Errorf("failed to save configuration: %w", err)
+	// Handle --reset flag for the chosen target
+	if reset {
+		if err := os.Remove(targetPath); err == nil {
+			fmt.Println(infoStyle.Render("Removed existing config: " + targetPath))
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("failed to remove existing config at %s: %w", targetPath, err)
+		}
+	} else if !force {
+		if _, err := os.Stat(targetPath); err == nil {
+			return fmt.Errorf("configuration file %s already exists. Use --force to overwrite or --reset to start fresh", targetPath)
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("failed to check existing config at %s: %w", targetPath, err)
+		}
 	}
 
-	printSuccessSummary(savePath, cfg)
+	// Ensure directories exist and save to the desired location
+	switch location {
+	case saveLocationTeam:
+		if err := cfg.SaveToRepoDefault(p); err != nil {
+			return fmt.Errorf("failed to save configuration: %w", err)
+		}
+	case saveLocationExplicit:
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+			return fmt.Errorf("failed to create config directory: %w", err)
+		}
+		if err := cfg.Save(targetPath); err != nil {
+			return fmt.Errorf("failed to save configuration: %w", err)
+		}
+	default:
+		if err := p.EnsureDirs(); err != nil {
+			return fmt.Errorf("failed to create config directory: %w", err)
+		}
+		if err := cfg.Save(targetPath); err != nil {
+			return fmt.Errorf("failed to save configuration: %w", err)
+		}
+	}
+
+	printSuccessSummary(targetPath, cfg)
 	return nil
 }
 
@@ -391,5 +410,29 @@ func runUpdateRepo(cmd *cobra.Command, args []string) error {
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
+	}
+}
+
+type configSaveLocation int
+
+const (
+	saveLocationUser configSaveLocation = iota
+	saveLocationTeam
+	saveLocationExplicit
+)
+
+func determineConfigSaveTarget(p *paths.Paths, explicit bool, explicitPath string, configType string) (string, configSaveLocation, error) {
+	if explicit && explicitPath != "" {
+		return explicitPath, saveLocationExplicit, nil
+	}
+
+	switch strings.ToLower(configType) {
+	case "team":
+		if p.RepoDefaultConfigPath == "" {
+			return "", saveLocationUser, fmt.Errorf("team configuration requires running inside a git repository or specifying --config to choose a path explicitly")
+		}
+		return p.RepoDefaultConfigPath, saveLocationTeam, nil
+	default:
+		return p.UserConfigFile(), saveLocationUser, nil
 	}
 }
