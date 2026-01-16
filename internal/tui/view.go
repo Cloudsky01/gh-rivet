@@ -10,6 +10,11 @@ func (m MenuModel) renderMultiPanelLayout() string {
 		return ""
 	}
 
+	// Show search overlay if global search is active
+	if m.globalSearchActive {
+		return m.renderSearchOverlay()
+	}
+
 	// Calculate panel dimensions with minimum widths
 	minSidebarWidth := 25
 	minDetailsWidth := 30

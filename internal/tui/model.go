@@ -66,6 +66,12 @@ type MenuModel struct {
 	refreshInterval    int
 	refreshTicker      *time.Ticker
 	autoRefreshEnabled bool
+
+	// Global search fields
+	globalSearchActive  bool
+	globalSearchInput   string
+	globalSearchResults []SearchResult
+	globalSearchIndex   int
 }
 
 type MenuOptions struct {

@@ -512,7 +512,6 @@ func (m MenuModel) renderBreadcrumb() string {
 		Render(breadcrumbText)
 }
 
-
 // renderStatusBar renders the refresh status bar
 func (m MenuModel) renderStatusBar() string {
 	if m.refreshInterval <= 0 {
@@ -545,7 +544,7 @@ func (m MenuModel) renderHelpBar() string {
 	var keys []string
 
 	// Global keys
-	keys = append(keys, "[q]uit", "[tab] cycle panels")
+	keys = append(keys, "[q]uit", "[tab] cycle panels", "[Ctrl+f] search")
 
 	// Panel-specific keys
 	switch m.activePanel {
@@ -593,4 +592,166 @@ func (m MenuModel) panelBorder(content string, panelType PanelType) string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(borderColor).
 		Render(content)
+}
+
+// renderSearchOverlay renders the global search modal overlay
+func (m MenuModel) renderSearchOverlay() string {
+	// Calculate overlay dimensions (centered, 60% width, 70% height)
+	overlayWidth := max(50, m.width*60/100)
+	overlayHeight := max(15, m.height*70/100)
+
+	var content strings.Builder
+
+	// Title
+	title := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("69")).
+		Render("Global Search")
+
+	content.WriteString(title)
+	content.WriteString("\n")
+	content.WriteString(strings.Repeat("─", overlayWidth-4))
+	content.WriteString("\n\n")
+
+	// Search input
+	inputStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("white")).
+		Background(lipgloss.Color("236")).
+		Padding(0, 1)
+
+	cursor := "█"
+	inputText := m.globalSearchInput + cursor
+	if m.globalSearchInput == "" {
+		inputText = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("240")).
+			Render("Type to search groups and workflows...") + cursor
+	}
+
+	searchIcon := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("69")).
+		Render("🔍 ")
+
+	content.WriteString(searchIcon)
+	content.WriteString(inputStyle.Render(inputText))
+	content.WriteString("\n\n")
+
+	// Results
+	if m.globalSearchInput == "" {
+		hintText := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("240")).
+			Render("  Start typing to search through all groups and workflows")
+		content.WriteString(hintText)
+	} else if len(m.globalSearchResults) == 0 {
+		noResultsText := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("240")).
+			Render("  No results found")
+		content.WriteString(noResultsText)
+	} else {
+		// Show results count
+		countText := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("240")).
+			Render(fmt.Sprintf("  %d results", len(m.globalSearchResults)))
+		content.WriteString(countText)
+		content.WriteString("\n\n")
+
+		// Calculate how many results we can show
+		linesPerResult := 2
+		maxResults := max(1, (overlayHeight-10)/linesPerResult)
+
+		// Adjust visible window based on selection
+		visibleStart := 0
+		visibleEnd := min(len(m.globalSearchResults), maxResults)
+
+		if m.globalSearchIndex >= visibleEnd {
+			visibleStart = m.globalSearchIndex - maxResults + 1
+			visibleEnd = m.globalSearchIndex + 1
+		}
+
+		for i := visibleStart; i < visibleEnd; i++ {
+			result := m.globalSearchResults[i]
+			isSelected := i == m.globalSearchIndex
+
+			// Prefix and styling based on selection
+			prefix := "  "
+			nameColor := lipgloss.Color("white")
+			if isSelected {
+				prefix = "> "
+				nameColor = lipgloss.Color("69")
+			}
+
+			// Icon based on type
+			icon := "📂"
+			if result.Type == "workflow" {
+				icon = "📄"
+			}
+
+			// Truncate name if needed
+			name := result.Name
+			maxNameWidth := overlayWidth - 15
+			if len(name) > maxNameWidth {
+				name = name[:maxNameWidth-3] + "..."
+			}
+
+			nameLine := lipgloss.NewStyle().
+				Foreground(nameColor).
+				Render(fmt.Sprintf("%s%s %s", prefix, icon, name))
+
+			content.WriteString(nameLine)
+			content.WriteString("\n")
+
+			// Show path
+			pathText := formatGroupPath(result.GroupPath)
+			if result.Type == "workflow" && result.Description != result.Name {
+				pathText = pathText + " / " + result.Description
+			}
+			maxPathWidth := overlayWidth - 10
+			if len(pathText) > maxPathWidth {
+				pathText = pathText[:maxPathWidth-3] + "..."
+			}
+
+			pathLine := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("240")).
+				Render(fmt.Sprintf("     %s", pathText))
+			content.WriteString(pathLine)
+			content.WriteString("\n")
+		}
+
+		// Show scroll indicator if needed
+		if len(m.globalSearchResults) > maxResults {
+			scrollInfo := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("240")).
+				Render(fmt.Sprintf("\n  (%d-%d of %d)", visibleStart+1, visibleEnd, len(m.globalSearchResults)))
+			content.WriteString(scrollInfo)
+		}
+	}
+
+	// Help hint at bottom
+	content.WriteString("\n\n")
+	hint := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")).
+		Render("[↑/↓] navigate | [enter] select | [esc] close")
+	content.WriteString(hint)
+
+	// Create the overlay box
+	overlayContent := lipgloss.NewStyle().
+		Width(overlayWidth-4).
+		Height(overlayHeight-2).
+		Padding(1, 2).
+		Render(content.String())
+
+	overlayBox := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("69")).
+		Background(lipgloss.Color("235")).
+		Render(overlayContent)
+
+	// Center the overlay
+	return lipgloss.Place(
+		m.width,
+		m.height,
+		lipgloss.Center,
+		lipgloss.Center,
+		overlayBox,
+		lipgloss.WithWhitespaceBackground(lipgloss.Color("0")),
+	)
 }

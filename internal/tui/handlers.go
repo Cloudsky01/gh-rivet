@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/Cloudsky01/gh-rivet/internal/config"
 )
 
 func (m MenuModel) View() string {
@@ -65,6 +67,11 @@ func (m MenuModel) handleWindowResize(msg tea.WindowSizeMsg) MenuModel {
 }
 
 func (m MenuModel) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Handle global search mode first (takes priority over everything)
+	if m.globalSearchActive {
+		return m.updateGlobalSearch(msg)
+	}
+
 	if m.sidebarFilterActive || m.navigationFilterActive {
 		switch m.activePanel {
 		case SidebarPanel:
@@ -131,6 +138,14 @@ func (m MenuModel) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "shift+tab":
 		m.activePanel = m.getPreviousPanel()
+		return m, nil
+
+	case "ctrl+f":
+		// Open global search
+		m.globalSearchActive = true
+		m.globalSearchInput = ""
+		m.globalSearchResults = nil
+		m.globalSearchIndex = 0
 		return m, nil
 	}
 
@@ -572,4 +587,120 @@ func (m MenuModel) getPreviousPanel() PanelType {
 	default:
 		return NavigationPanel
 	}
+}
+
+// updateGlobalSearch handles input when global search is active
+func (m MenuModel) updateGlobalSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		// Close global search
+		m.globalSearchActive = false
+		m.globalSearchInput = ""
+		m.globalSearchResults = nil
+		m.globalSearchIndex = 0
+		return m, nil
+
+	case "enter":
+		// Select the current result
+		if len(m.globalSearchResults) > 0 && m.globalSearchIndex < len(m.globalSearchResults) {
+			result := m.globalSearchResults[m.globalSearchIndex]
+			m.globalSearchActive = false
+			m.globalSearchInput = ""
+			m.globalSearchResults = nil
+			m.globalSearchIndex = 0
+			return m.navigateToSearchResult(result)
+		}
+		return m, nil
+
+	case "up", "ctrl+p":
+		// Move selection up
+		if m.globalSearchIndex > 0 {
+			m.globalSearchIndex--
+		}
+		return m, nil
+
+	case "down", "ctrl+n":
+		// Move selection down
+		if m.globalSearchIndex < len(m.globalSearchResults)-1 {
+			m.globalSearchIndex++
+		}
+		return m, nil
+
+	case "backspace":
+		// Remove last character
+		if len(m.globalSearchInput) > 0 {
+			m.globalSearchInput = m.globalSearchInput[:len(m.globalSearchInput)-1]
+			m.globalSearchResults = globalSearch(m.config, m.globalSearchInput)
+			m.globalSearchIndex = 0
+		}
+		return m, nil
+
+	default:
+		// Add character to search input (only printable chars)
+		key := msg.String()
+		if len(key) == 1 {
+			m.globalSearchInput += key
+			m.globalSearchResults = globalSearch(m.config, m.globalSearchInput)
+			m.globalSearchIndex = 0
+		}
+		return m, nil
+	}
+}
+
+// navigateToSearchResult navigates to the selected search result
+func (m MenuModel) navigateToSearchResult(result SearchResult) (tea.Model, tea.Cmd) {
+	if result.Type == "group" {
+		// Navigate to the group (enter into it)
+		m.groupPath = resolveGroupPathFromNames(m.config, result.GroupPath)
+		if result.Group != nil {
+			m.groupPath = append(m.groupPath, result.Group)
+		}
+		m.list.SetItems(buildListItems(m.config, m.groupPath))
+		m.list.ResetSelected()
+		m.activePanel = NavigationPanel
+		m.saveState()
+		return m, nil
+	}
+
+	// It's a workflow - navigate to its group and select it
+	m.groupPath = resolveGroupPathFromNames(m.config, result.GroupPath)
+	m.list.SetItems(buildListItems(m.config, m.groupPath))
+	m.list.ResetSelected()
+
+	// Select the workflow and show its details
+	m.selectedWorkflow = result.WorkflowName
+	m.selectedGroup = result.Group
+	m.loading = true
+	m.activePanel = DetailsPanel
+	m.startRefreshTicker()
+	m.saveState()
+	return m, m.fetchWorkflowRunsCmd
+}
+
+// resolveGroupPathFromNames converts a slice of group names to a slice of Group pointers
+func resolveGroupPathFromNames(cfg *config.Config, names []string) []*config.Group {
+	if len(names) == 0 {
+		return []*config.Group{}
+	}
+
+	path := make([]*config.Group, 0, len(names))
+	currentGroups := cfg.Groups
+
+	for _, name := range names {
+		found := false
+		for i := range currentGroups {
+			if currentGroups[i].Name == name {
+				path = append(path, &currentGroups[i])
+				currentGroups = currentGroups[i].Groups
+				found = true
+				break
+			}
+		}
+		if !found {
+			// Path doesn't exist, return what we have
+			break
+		}
+	}
+
+	return path
 }
