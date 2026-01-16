@@ -161,18 +161,30 @@ func (s *Sidebar) handleKey(msg tea.KeyMsg) tea.Cmd {
 		switch msg.String() {
 		case "enter":
 			s.filterActive = false
-			s.cursor = 0
 			return nil
 		case "esc":
 			s.filterActive = false
 			s.filterInput = ""
 			s.applyFilter()
+			s.cursor = 0
+			return nil
+		case "ctrl+n", "down":
+			if s.cursor < len(s.filteredItems)-1 {
+				s.cursor++
+			}
+			return nil
+		case "ctrl+p", "up":
+			if s.cursor > 0 {
+				s.cursor--
+			}
 			return nil
 		case "backspace":
 			if len(s.filterInput) > 0 {
 				s.filterInput = s.filterInput[:len(s.filterInput)-1]
 				s.applyFilter()
-				s.cursor = 0
+				if s.cursor >= len(s.filteredItems) {
+					s.cursor = max(0, len(s.filteredItems)-1)
+				}
 			}
 			return nil
 		default:
@@ -180,7 +192,9 @@ func (s *Sidebar) handleKey(msg tea.KeyMsg) tea.Cmd {
 			if len(key) == 1 {
 				s.filterInput += key
 				s.applyFilter()
-				s.cursor = 0
+				if s.cursor >= len(s.filteredItems) {
+					s.cursor = max(0, len(s.filteredItems)-1)
+				}
 			}
 			return nil
 		}
@@ -200,9 +214,25 @@ func (s *Sidebar) handleKey(msg tea.KeyMsg) tea.Cmd {
 			s.cursor--
 		}
 		return nil
+	case "g":
+		s.cursor = 0
+		return nil
+	case "G":
+		s.cursor = max(0, len(s.filteredItems)-1)
+		return nil
 	case "esc":
 		if s.filterInput != "" {
 			s.ClearFilter()
+		}
+		return nil
+	case "n":
+		if s.filterInput != "" && s.cursor < len(s.filteredItems)-1 {
+			s.cursor++
+		}
+		return nil
+	case "N":
+		if s.filterInput != "" && s.cursor > 0 {
+			s.cursor--
 		}
 		return nil
 	}

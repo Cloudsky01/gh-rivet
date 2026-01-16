@@ -46,6 +46,12 @@ func NewRunsTable(t *theme.Theme) RunsTable {
 	}
 }
 
+// NewRunsTablePtr creates a new runs table component as a pointer
+func NewRunsTablePtr(t *theme.Theme) *RunsTable {
+	rt := NewRunsTable(t)
+	return &rt
+}
+
 // SetRuns sets the workflow runs data
 func (r *RunsTable) SetRuns(runs []models.GHRun, workflowName string) {
 	r.runs = runs
@@ -56,6 +62,9 @@ func (r *RunsTable) SetRuns(runs []models.GHRun, workflowName string) {
 
 // SetSize sets dimensions
 func (r *RunsTable) SetSize(width, height int) {
+	if r.width == width && r.height == height {
+		return // No change, don't rebuild
+	}
 	r.width = width
 	r.height = height
 	r.rebuildTable()
@@ -130,6 +139,12 @@ func (r *RunsTable) rebuildTable() {
 		return
 	}
 
+	// Preserve current highlighted row index
+	currentIdx := r.table.GetHighlightedRowIndex()
+	if currentIdx < 0 {
+		currentIdx = 0
+	}
+
 	// Calculate column widths dynamically
 	idWidth := 10
 	statusWidth := 12
@@ -186,21 +201,38 @@ func (r *RunsTable) rebuildTable() {
 			Foreground(r.theme.Colors.Text).
 			BorderForeground(r.theme.Colors.Border)).
 		HighlightStyle(highlightStyle).
-		HeaderStyle(headerStyle)
+		HeaderStyle(headerStyle).
+		WithHighlightedRow(currentIdx)
 }
 
-// Update handles input
 func (r *RunsTable) Update(msg tea.Msg) tea.Cmd {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "j":
+			r.table = r.table.WithHighlightedRow(r.table.GetHighlightedRowIndex() + 1)
+			return nil
+		case "k":
+			idx := r.table.GetHighlightedRowIndex()
+			if idx > 0 {
+				r.table = r.table.WithHighlightedRow(idx - 1)
+			}
+			return nil
+		case "g":
+			r.table = r.table.WithHighlightedRow(0)
+			return nil
+		case "G":
+			r.table = r.table.WithHighlightedRow(len(r.runs) - 1)
+			return nil
+		}
+	}
+
 	var cmd tea.Cmd
 	r.table, cmd = r.table.Update(msg)
 	return cmd
 }
 
-// View renders the table
 func (r *RunsTable) View() string {
-	if !r.visible {
-		return ""
-	}
 
 	var b strings.Builder
 

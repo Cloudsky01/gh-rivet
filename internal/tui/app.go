@@ -1,5 +1,3 @@
-// Package tui provides the terminal user interface for rivet.
-// This file contains the main application model using a component-based architecture.
 package tui
 
 import (
@@ -18,60 +16,58 @@ import (
 	"github.com/Cloudsky01/gh-rivet/pkg/models"
 )
 
-// ViewMode represents the current view/panel focus
 type ViewMode int
 
 const (
-	ViewSidebar ViewMode = iota
-	ViewNavigation
-	ViewDetails
+	ViewGroups ViewMode = iota
 	ViewRuns
 )
 
-// App is the main application model
+type FocusArea int
+
+const (
+	FocusSidebar FocusArea = iota
+	FocusMain
+)
+
 type App struct {
-	// Configuration
 	config     *config.Config
 	configPath string
 	statePath  string
 	gh         *github.Client
 
-	// Theming
 	theme *theme.Theme
 
-	// Components
-	sidebar   components.Sidebar
-	navList   components.List
-	details   components.Details
-	runsTable components.RunsTable
-	search    components.Search
-	statusBar components.StatusBar
-	helpBar   components.HelpBar
+	sidebar     components.Sidebar
+	navList     components.List
+	runsTable   *components.RunsTable
+	search      components.Search
+	cmdPalette  components.CmdPalette
+	helpOverlay components.HelpOverlay
+	toaster     components.Toaster
+	spinner     components.Spinner
+	statusBar   components.StatusBar
+	helpBar     components.HelpBar
 
-	// Navigation state
 	groupPath        []*config.Group
 	selectedWorkflow string
 	selectedGroup    *config.Group
 
-	// UI state
-	activeView  ViewMode
+	viewMode    ViewMode
+	focusArea   FocusArea
 	showSidebar bool
-	showRuns    bool
 	width       int
 	height      int
 
-	// Data state
 	workflowRuns []models.GHRun
 	loading      bool
 	err          error
 
-	// Refresh timer
 	refreshInterval    int
 	refreshTicker      *time.Ticker
 	autoRefreshEnabled bool
 }
 
-// AppOptions contains options for creating a new App
 type AppOptions struct {
 	StartWithPinned bool
 	StatePath       string
@@ -79,7 +75,6 @@ type AppOptions struct {
 	RefreshInterval int
 }
 
-// NewApp creates a new App with the given configuration
 func NewApp(cfg *config.Config, configPath string, gh *github.Client, opts AppOptions) *App {
 	t := theme.Default()
 
@@ -96,37 +91,37 @@ func NewApp(cfg *config.Config, configPath string, gh *github.Client, opts AppOp
 		theme:              t,
 		sidebar:            components.NewSidebar(t),
 		navList:            components.NewList(t, "📁 Groups"),
-		details:            components.NewDetails(t),
-		runsTable:          components.NewRunsTable(t),
+		runsTable:          components.NewRunsTablePtr(t),
 		search:             components.NewSearch(t),
+		cmdPalette:         components.NewCmdPalette(t),
+		helpOverlay:        components.NewHelpOverlay(t),
+		toaster:            components.NewToaster(t),
+		spinner:            components.NewSpinner(t),
 		statusBar:          components.NewStatusBar(t),
 		helpBar:            components.NewHelpBar(t),
 		groupPath:          []*config.Group{},
-		activeView:         ViewNavigation,
+		viewMode:           ViewGroups,
+		focusArea:          FocusMain,
 		showSidebar:        true,
-		showRuns:           false,
 		refreshInterval:    opts.RefreshInterval,
 		autoRefreshEnabled: opts.RefreshInterval > 0,
 	}
 
-	// Set up search function
 	app.search.SetSearchFunc(func(query string) []components.SearchResult {
 		return app.performGlobalSearch(query)
 	})
 
-	// Initialize components
+	app.setupCommands()
 	app.refreshNavList()
 	app.refreshPinnedList()
 	app.updateStatusBar()
 
-	// Restore state if requested
 	if !opts.NoRestoreState {
 		app.restoreState()
 	}
 
-	// Start with pinned view if requested
 	if opts.StartWithPinned && len(cfg.GetAllPinnedWorkflows()) > 0 {
-		app.activeView = ViewSidebar
+		app.focusArea = FocusSidebar
 	}
 
 	app.updateFocus()
@@ -134,13 +129,13 @@ func NewApp(cfg *config.Config, configPath string, gh *github.Client, opts AppOp
 	return app
 }
 
-// Init implements tea.Model
 func (a *App) Init() tea.Cmd {
 	return nil
 }
 
-// Update implements tea.Model
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		return a.handleResize(msg)
@@ -150,38 +145,56 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case workflowRunsMsg:
 		a.loading = false
+		a.spinner.Stop()
 		if msg.err != nil {
 			a.err = msg.err
-			a.details.SetError(msg.err)
 			a.runsTable.SetError(msg.err)
+			cmds = append(cmds, a.toaster.Error("Failed to load runs"))
 		} else {
 			a.workflowRuns = msg.runs
-			a.details.SetRuns(msg.runs)
 			a.runsTable.SetRuns(msg.runs, a.selectedWorkflow)
 		}
-		a.details.SetLoading(false)
 		a.runsTable.SetLoading(false)
-		return a, a.getRefreshTickerCmd()
+		cmds = append(cmds, a.getRefreshTickerCmd())
+		return a, tea.Batch(cmds...)
 
 	case refreshTickMsg:
 		if a.selectedWorkflow != "" && !a.loading {
 			a.loading = true
-			a.details.SetLoading(true)
+			a.runsTable.SetLoading(true)
 			return a, tea.Batch(a.fetchWorkflowRunsCmd, a.getRefreshTickerCmd())
 		}
 		return a, a.getRefreshTickerCmd()
+
+	case components.ToastExpiredMsg:
+		a.toaster.Update(msg)
+		return a, nil
+
+	default:
+		if a.spinner.IsActive() {
+			cmd := a.spinner.Update(msg)
+			if cmd != nil {
+				return a, cmd
+			}
+		}
 	}
 
 	return a, nil
 }
 
-// View implements tea.Model
 func (a *App) View() string {
 	if a.width == 0 || a.height == 0 {
 		return ""
 	}
 
-	// Show search overlay if active
+	if a.helpOverlay.IsActive() {
+		return a.helpOverlay.View()
+	}
+
+	if a.cmdPalette.IsActive() {
+		return a.cmdPalette.View()
+	}
+
 	if a.search.IsActive() {
 		return a.search.View()
 	}
@@ -189,47 +202,46 @@ func (a *App) View() string {
 	return a.renderLayout()
 }
 
-// handleResize handles window resize events
 func (a *App) handleResize(msg tea.WindowSizeMsg) (*App, tea.Cmd) {
 	a.width = msg.Width
 	a.height = msg.Height
 
-	// Calculate panel dimensions
+	barHeight := 2
+	panelHeight := a.height - barHeight - 2
+
 	sidebarWidth := 0
 	if a.showSidebar {
 		sidebarWidth = max(25, a.width/5)
 	}
-	mainWidth := a.width - sidebarWidth - 4 // Account for borders
+	mainWidth := a.width - sidebarWidth - 2
 
-	// Split main area between nav and details
-	navWidth := mainWidth * 2 / 3
-	detailsWidth := mainWidth - navWidth
-
-	// Calculate heights
-	barHeight := 2 // status bar + help bar
-	panelHeight := a.height - barHeight - 2
-
-	runsHeight := 0
-	if a.showRuns {
-		runsHeight = max(10, panelHeight/3)
-		panelHeight = panelHeight - runsHeight - 2
-	}
-
-	// Update component sizes
 	a.sidebar.SetSize(sidebarWidth-2, panelHeight)
-	a.navList.SetSize(navWidth-2, panelHeight)
-	a.details.SetSize(detailsWidth-2, panelHeight)
-	a.runsTable.SetSize(a.width-4, runsHeight)
+	a.navList.SetSize(mainWidth-2, panelHeight)
+	a.runsTable.SetSize(mainWidth-2, panelHeight)
 	a.search.SetSize(a.width, a.height)
+	a.cmdPalette.SetSize(a.width, a.height)
+	a.helpOverlay.SetSize(a.width, a.height)
+	a.toaster.SetWidth(a.width)
 	a.statusBar.SetSize(a.width)
 	a.helpBar.SetSize(a.width)
 
 	return a, nil
 }
 
-// handleKey handles key press events
 func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Handle search mode first
+	if a.helpOverlay.IsActive() {
+		a.helpOverlay.Update(msg)
+		return a, nil
+	}
+
+	if a.cmdPalette.IsActive() {
+		cmd, teaCmd := a.cmdPalette.Update(msg)
+		if cmd != nil {
+			return a.executeCommand(cmd)
+		}
+		return a, teaCmd
+	}
+
 	if a.search.IsActive() {
 		result, cmd := a.search.Update(msg)
 		if result != nil {
@@ -238,60 +250,58 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, cmd
 	}
 
-	// Handle component-specific filtering
 	if a.isFiltering() {
 		return a.handleFilterKey(msg)
 	}
 
-	// Global keys
 	switch msg.String() {
 	case "ctrl+c", "q":
 		a.stopRefreshTicker()
 		a.saveState()
 		return a, tea.Quit
 
+	case "?":
+		a.helpOverlay.Toggle()
+		return a, nil
+
+	case ":":
+		a.cmdPalette.Open()
+		return a, nil
+
 	case "1":
 		a.showSidebar = !a.showSidebar
+		if !a.showSidebar && a.focusArea == FocusSidebar {
+			a.focusArea = FocusMain
+		}
+		a.updateFocus()
 		return a.handleResize(tea.WindowSizeMsg{Width: a.width, Height: a.height})
 
 	case "tab":
-		a.cycleView(1)
-		a.updateFocus()
-		return a, nil
-
-	case "shift+tab":
-		a.cycleView(-1)
-		a.updateFocus()
-		return a, nil
-
-	case "s":
 		if a.showSidebar {
-			a.activeView = ViewSidebar
+			if a.focusArea == FocusSidebar {
+				a.focusArea = FocusMain
+			} else {
+				a.focusArea = FocusSidebar
+			}
 			a.updateFocus()
 		}
 		return a, nil
 
-	case "g":
-		a.activeView = ViewNavigation
-		a.updateFocus()
-		return a, nil
-
-	case "d":
-		a.activeView = ViewDetails
-		a.updateFocus()
-		return a, nil
-
-	case "r":
-		if a.selectedWorkflow != "" {
-			a.showRuns = !a.showRuns
-			a.runsTable.SetVisible(a.showRuns)
-			if a.showRuns {
-				a.activeView = ViewRuns
-			} else if a.activeView == ViewRuns {
-				a.activeView = ViewDetails
+	case "shift+tab":
+		if a.showSidebar {
+			if a.focusArea == FocusMain {
+				a.focusArea = FocusSidebar
+			} else {
+				a.focusArea = FocusMain
 			}
 			a.updateFocus()
-			return a.handleResize(tea.WindowSizeMsg{Width: a.width, Height: a.height})
+		}
+		return a, nil
+
+	case "s":
+		if a.showSidebar {
+			a.focusArea = FocusSidebar
+			a.updateFocus()
 		}
 		return a, nil
 
@@ -302,11 +312,12 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+r":
 		if a.selectedWorkflow != "" && !a.loading {
 			a.loading = true
-			a.details.SetLoading(true)
+			a.runsTable.SetLoading(true)
+			cmds := []tea.Cmd{a.spinner.Start("Refreshing..."), a.fetchWorkflowRunsCmd}
 			if a.refreshInterval > 0 && a.autoRefreshEnabled {
 				a.startRefreshTicker()
 			}
-			return a, a.fetchWorkflowRunsCmd
+			return a, tea.Batch(cmds...)
 		}
 		return a, nil
 
@@ -323,57 +334,57 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
-	// Delegate to active view
-	return a.handleViewKey(msg)
-}
-
-// handleViewKey handles keys for the active view
-func (a *App) handleViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch a.activeView {
-	case ViewSidebar:
+	if a.focusArea == FocusSidebar {
 		return a.handleSidebarKey(msg)
-	case ViewNavigation:
-		return a.handleNavigationKey(msg)
-	case ViewDetails:
-		return a.handleDetailsKey(msg)
+	}
+
+	switch a.viewMode {
+	case ViewGroups:
+		return a.handleGroupsKey(msg)
 	case ViewRuns:
 		return a.handleRunsKey(msg)
 	}
+
 	return a, nil
 }
 
-// handleSidebarKey handles keys when sidebar is focused
 func (a *App) handleSidebarKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
 		if item := a.sidebar.SelectedItem(); item != nil {
-			a.selectWorkflow(item.WorkflowName, item.Data.(*config.Group))
-			return a, a.fetchWorkflowRunsCmd
+			return a.selectWorkflowFromSidebar(item)
 		}
 		return a, nil
 
 	case "p":
-		// Unpin workflow
 		if item := a.sidebar.SelectedItem(); item != nil {
 			if group, ok := item.Data.(*config.Group); ok {
 				group.TogglePin(item.WorkflowName)
 				if err := a.config.Save(a.configPath); err != nil {
 					a.err = fmt.Errorf("failed to save config: %w", err)
+					return a, a.toaster.Error("Failed to save")
 				}
 				a.refreshPinnedList()
 				a.refreshNavList()
 				a.saveState()
+				return a, a.toaster.Success("Unpinned workflow")
 			}
 		}
 		return a, nil
 
 	case "w":
-		// Open in browser
 		if item := a.sidebar.SelectedItem(); item != nil {
 			if err := a.gh.OpenWorkflowInBrowser(item.WorkflowName); err != nil {
 				a.err = err
+				return a, a.toaster.Error("Failed to open browser")
 			}
+			return a, a.toaster.Info("Opening in browser...")
 		}
+		return a, nil
+
+	case "l", "right":
+		a.focusArea = FocusMain
+		a.updateFocus()
 		return a, nil
 
 	default:
@@ -382,8 +393,7 @@ func (a *App) handleSidebarKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-// handleNavigationKey handles keys when navigation is focused
-func (a *App) handleNavigationKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (a *App) handleGroupsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter", "l":
 		if item := a.navList.SelectedItem(); item != nil {
@@ -404,30 +414,36 @@ func (a *App) handleNavigationKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case "p":
-		// Toggle pin
 		if len(a.groupPath) > 0 {
 			if item := a.navList.SelectedItem(); item != nil {
 				if navItem, ok := item.Data.(*navItemData); ok && !navItem.isGroup {
 					currentGroup := a.groupPath[len(a.groupPath)-1]
+					wasPinned := currentGroup.IsPinned(navItem.workflowName)
 					currentGroup.TogglePin(navItem.workflowName)
 					if err := a.config.Save(a.configPath); err != nil {
 						a.err = fmt.Errorf("failed to save config: %w", err)
+						return a, a.toaster.Error("Failed to save")
 					}
 					a.refreshNavList()
 					a.refreshPinnedList()
 					a.saveState()
+					if wasPinned {
+						return a, a.toaster.Success("Unpinned workflow")
+					}
+					return a, a.toaster.Success("Pinned workflow")
 				}
 			}
 		}
 		return a, nil
 
 	case "w":
-		// Open in browser
 		if item := a.navList.SelectedItem(); item != nil {
 			if navItem, ok := item.Data.(*navItemData); ok && !navItem.isGroup {
 				if err := a.gh.OpenWorkflowInBrowser(navItem.workflowName); err != nil {
 					a.err = err
+					return a, a.toaster.Error("Failed to open browser")
 				}
+				return a, a.toaster.Info("Opening in browser...")
 			}
 		}
 		return a, nil
@@ -438,45 +454,27 @@ func (a *App) handleNavigationKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-// handleDetailsKey handles keys when details is focused
-func (a *App) handleDetailsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "w":
-		if a.selectedWorkflow != "" {
-			if err := a.gh.OpenWorkflowInBrowser(a.selectedWorkflow); err != nil {
-				a.err = err
-			}
-		}
-		return a, nil
-
-	case "esc":
-		a.clearSelection()
-		a.activeView = ViewNavigation
-		a.updateFocus()
-		return a, nil
-	}
-	return a, nil
-}
-
-// handleRunsKey handles keys when runs table is focused
 func (a *App) handleRunsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "w":
-		// Open run in browser
 		runID := a.runsTable.SelectedRunID()
 		if runID > 0 {
 			if err := a.gh.OpenRunInBrowser(runID); err != nil {
 				a.err = err
+				return a, a.toaster.Error("Failed to open browser")
 			}
+			return a, a.toaster.Info("Opening run in browser...")
 		}
 		return a, nil
 
-	case "esc":
-		a.showRuns = false
-		a.runsTable.SetVisible(false)
-		a.activeView = ViewDetails
+	case "esc", "h", "backspace":
+		a.viewMode = ViewGroups
+		a.selectedWorkflow = ""
+		a.selectedGroup = nil
+		a.stopRefreshTicker()
 		a.updateFocus()
-		return a.handleResize(tea.WindowSizeMsg{Width: a.width, Height: a.height})
+		a.updateStatusBar()
+		return a, nil
 
 	default:
 		a.runsTable.Update(msg)
@@ -484,54 +482,29 @@ func (a *App) handleRunsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-// handleFilterKey handles keys when a component is filtering
 func (a *App) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch a.activeView {
-	case ViewSidebar:
+	if a.focusArea == FocusSidebar {
 		a.sidebar.Update(msg)
-	case ViewNavigation:
+	} else {
 		a.navList.Update(msg)
 	}
 	return a, nil
 }
 
-// isFiltering returns true if any component is in filter mode
 func (a *App) isFiltering() bool {
-	return a.sidebar.IsFiltering() || a.navList.IsFiltering()
+	if a.focusArea == FocusSidebar {
+		return a.sidebar.IsFiltering()
+	}
+	return a.navList.IsFiltering()
 }
 
-// cycleView cycles through views
-func (a *App) cycleView(direction int) {
-	views := []ViewMode{ViewNavigation, ViewDetails}
-	if a.showSidebar {
-		views = append([]ViewMode{ViewSidebar}, views...)
-	}
-	if a.showRuns {
-		views = append(views, ViewRuns)
-	}
-
-	current := 0
-	for i, v := range views {
-		if v == a.activeView {
-			current = i
-			break
-		}
-	}
-
-	next := (current + direction + len(views)) % len(views)
-	a.activeView = views[next]
-}
-
-// updateFocus updates component focus states
 func (a *App) updateFocus() {
-	a.sidebar.SetFocused(a.activeView == ViewSidebar)
-	a.navList.SetFocused(a.activeView == ViewNavigation)
-	a.details.SetFocused(a.activeView == ViewDetails)
-	a.runsTable.SetFocused(a.activeView == ViewRuns)
+	a.sidebar.SetFocused(a.focusArea == FocusSidebar)
+	a.navList.SetFocused(a.focusArea == FocusMain && a.viewMode == ViewGroups)
+	a.runsTable.SetFocused(a.focusArea == FocusMain && a.viewMode == ViewRuns)
 	a.updateHelpBar()
 }
 
-// selectNavItem handles selection of a navigation item
 func (a *App) selectNavItem(item *components.ListItem) (*App, tea.Cmd) {
 	navItem, ok := item.Data.(*navItemData)
 	if !ok {
@@ -539,7 +512,6 @@ func (a *App) selectNavItem(item *components.ListItem) (*App, tea.Cmd) {
 	}
 
 	if navItem.isGroup {
-		// Enter group
 		if navItem.group != nil {
 			a.groupPath = append(a.groupPath, navItem.group)
 			a.navList.ClearFilter()
@@ -549,40 +521,31 @@ func (a *App) selectNavItem(item *components.ListItem) (*App, tea.Cmd) {
 		return a, nil
 	}
 
-	// Select workflow
-	a.selectWorkflow(navItem.workflowName, nil)
-	return a, a.fetchWorkflowRunsCmd
+	return a.selectWorkflow(navItem.workflowName, nil)
 }
 
-// selectWorkflow selects a workflow and prepares to fetch runs
-func (a *App) selectWorkflow(name string, group *config.Group) {
+func (a *App) selectWorkflowFromSidebar(item *components.PinnedItem) (*App, tea.Cmd) {
+	group, _ := item.Data.(*config.Group)
+	return a.selectWorkflow(item.WorkflowName, group)
+}
+
+func (a *App) selectWorkflow(name string, group *config.Group) (*App, tea.Cmd) {
 	a.selectedWorkflow = name
 	a.selectedGroup = group
 	a.loading = true
-	a.details.SetWorkflow(name)
-	a.details.SetLoading(true)
+	a.viewMode = ViewRuns
+	a.runsTable.SetVisible(true)
 	a.runsTable.SetLoading(true)
-	a.activeView = ViewDetails
+	a.focusArea = FocusMain
 	a.updateFocus()
 	a.startRefreshTicker()
 	a.updateStatusBar()
 	a.saveState()
+	return a, tea.Batch(a.spinner.Start("Loading runs..."), a.fetchWorkflowRunsCmd)
 }
 
-// clearSelection clears the current workflow selection
-func (a *App) clearSelection() {
-	a.selectedWorkflow = ""
-	a.selectedGroup = nil
-	a.workflowRuns = nil
-	a.details.Clear()
-	a.stopRefreshTicker()
-	a.updateStatusBar()
-}
-
-// navigateToSearchResult navigates to a search result
 func (a *App) navigateToSearchResult(result *components.SearchResult) (*App, tea.Cmd) {
 	if result.Type == "group" {
-		// Navigate to group
 		a.groupPath = a.resolveGroupPath(result.GroupPath)
 		if result.Data != nil {
 			if group, ok := result.Data.(*config.Group); ok {
@@ -590,27 +553,23 @@ func (a *App) navigateToSearchResult(result *components.SearchResult) (*App, tea
 			}
 		}
 		a.refreshNavList()
-		a.activeView = ViewNavigation
+		a.viewMode = ViewGroups
+		a.focusArea = FocusMain
 		a.updateFocus()
 		a.saveState()
 		return a, nil
 	}
 
-	// Navigate to workflow
 	a.groupPath = a.resolveGroupPath(result.GroupPath)
 	a.refreshNavList()
 
-	// Get the group reference
 	var group *config.Group
 	if len(a.groupPath) > 0 {
 		group = a.groupPath[len(a.groupPath)-1]
 	}
 
-	a.selectWorkflow(result.WorkflowName, group)
-	return a, a.fetchWorkflowRunsCmd
+	return a.selectWorkflow(result.WorkflowName, group)
 }
-
-// Helper types and methods
 
 type navItemData struct {
 	isGroup      bool
@@ -619,24 +578,18 @@ type navItemData struct {
 	isPinned     bool
 }
 
-// refreshNavList refreshes the navigation list items
 func (a *App) refreshNavList() {
 	items := a.buildNavItems()
 	a.navList.SetItems(items)
 
-	// Update title based on path
 	if len(a.groupPath) == 0 {
 		a.navList.SetTitle("📁 Groups")
 	} else {
-		parts := make([]string, len(a.groupPath))
-		for i, g := range a.groupPath {
-			parts[i] = g.Name
-		}
-		a.navList.SetTitle("📁 " + parts[len(parts)-1])
+		current := a.groupPath[len(a.groupPath)-1]
+		a.navList.SetTitle("📁 " + current.Name)
 	}
 }
 
-// buildNavItems builds the navigation list items for the current group path
 func (a *App) buildNavItems() []components.ListItem {
 	var items []components.ListItem
 
@@ -647,14 +600,11 @@ func (a *App) buildNavItems() []components.ListItem {
 		currentGroup := a.groupPath[len(a.groupPath)-1]
 		groups = currentGroup.Groups
 
-		// Build workflow list from all sources
 		workflows := make([]string, 0)
 		workflowDefs := make(map[string]*config.Workflow)
 
-		// Add workflows from Workflows array
 		workflows = append(workflows, currentGroup.Workflows...)
 
-		// Add workflows from WorkflowDefs
 		for i := range currentGroup.WorkflowDefs {
 			wf := &currentGroup.WorkflowDefs[i]
 			workflowDefs[wf.File] = wf
@@ -670,7 +620,6 @@ func (a *App) buildNavItems() []components.ListItem {
 			}
 		}
 
-		// Separate pinned and unpinned
 		var pinnedWorkflows []string
 		var unpinnedWorkflows []string
 		for _, wf := range workflows {
@@ -681,7 +630,6 @@ func (a *App) buildNavItems() []components.ListItem {
 			}
 		}
 
-		// Helper to get display name
 		getDisplayName := func(filename string) string {
 			if wfDef, ok := workflowDefs[filename]; ok && wfDef.Name != "" {
 				return wfDef.Name
@@ -689,7 +637,6 @@ func (a *App) buildNavItems() []components.ListItem {
 			return filename
 		}
 
-		// Add pinned workflows first
 		for _, wf := range pinnedWorkflows {
 			items = append(items, components.ListItem{
 				ID:          wf,
@@ -704,7 +651,6 @@ func (a *App) buildNavItems() []components.ListItem {
 			})
 		}
 
-		// Add unpinned workflows
 		for _, wf := range unpinnedWorkflows {
 			items = append(items, components.ListItem{
 				ID:          wf,
@@ -720,7 +666,6 @@ func (a *App) buildNavItems() []components.ListItem {
 		}
 	}
 
-	// Add subgroups
 	for i := range groups {
 		group := &groups[i]
 		workflowCount := a.countWorkflows(group)
@@ -740,16 +685,14 @@ func (a *App) buildNavItems() []components.ListItem {
 	return items
 }
 
-// countWorkflows counts total workflows in a group recursively
 func (a *App) countWorkflows(group *config.Group) int {
-	count := len(group.GetAllWorkflows())
+	count := len(group.Workflows) + len(group.WorkflowDefs)
 	for i := range group.Groups {
 		count += a.countWorkflows(&group.Groups[i])
 	}
 	return count
 }
 
-// refreshPinnedList refreshes the sidebar pinned items
 func (a *App) refreshPinnedList() {
 	pinnedWorkflows := a.config.GetAllPinnedWorkflows()
 	items := make([]components.PinnedItem, len(pinnedWorkflows))
@@ -766,7 +709,6 @@ func (a *App) refreshPinnedList() {
 	a.sidebar.SetItems(items)
 }
 
-// updateStatusBar updates the status bar content
 func (a *App) updateStatusBar() {
 	a.statusBar.SetRepository(a.config.Repository)
 
@@ -780,31 +722,32 @@ func (a *App) updateStatusBar() {
 	a.statusBar.SetLoading(a.loading)
 }
 
-// updateHelpBar updates the help bar hints
 func (a *App) updateHelpBar() {
-	hints := components.GlobalHints()
+	hints := []string{"[q]uit", "[?]help", "[:]cmd", "[ctrl+f]search"}
 
-	switch a.activeView {
-	case ViewSidebar:
-		hints = append(hints, components.SidebarHints()...)
-	case ViewNavigation:
-		hints = append(hints, components.NavigationHints(len(a.groupPath) > 0)...)
-	case ViewDetails:
-		hints = append(hints, components.DetailsHints(a.selectedWorkflow != "")...)
-	case ViewRuns:
-		hints = append(hints, components.RunsHints()...)
+	if a.showSidebar {
+		hints = append(hints, "[tab]switch", "[1]sidebar")
+	}
+
+	if a.focusArea == FocusSidebar {
+		hints = append(hints, "[enter]select", "[p]unpin", "[w]web")
+	} else if a.viewMode == ViewGroups {
+		hints = append(hints, "[enter]select", "[/]filter")
+		if len(a.groupPath) > 0 {
+			hints = append(hints, "[h]back", "[p]pin", "[w]web")
+		}
+	} else {
+		hints = append(hints, "[j/k]nav", "[w]open", "[h]back")
 	}
 
 	a.helpBar.SetHints(hints)
 }
 
-// performGlobalSearch searches all groups and workflows
 func (a *App) performGlobalSearch(query string) []components.SearchResult {
 	var results []components.SearchResult
 
 	var searchGroup func(group *config.Group, path []string)
 	searchGroup = func(group *config.Group, path []string) {
-		// Add group as result
 		results = append(results, components.SearchResult{
 			Type:      "group",
 			Name:      group.Name,
@@ -812,10 +755,8 @@ func (a *App) performGlobalSearch(query string) []components.SearchResult {
 			Data:      group,
 		})
 
-		// Add workflows - collect from both Workflows and WorkflowDefs
 		currentPath := append(path, group.Name)
 
-		// Build workflow display names map
 		workflowDefs := make(map[string]string)
 		for i := range group.WorkflowDefs {
 			wf := &group.WorkflowDefs[i]
@@ -824,7 +765,6 @@ func (a *App) performGlobalSearch(query string) []components.SearchResult {
 			}
 		}
 
-		// Add all workflows from this group (not recursive - GetAllWorkflows is recursive)
 		allWorkflows := make([]string, 0)
 		allWorkflows = append(allWorkflows, group.Workflows...)
 		for i := range group.WorkflowDefs {
@@ -856,22 +796,18 @@ func (a *App) performGlobalSearch(query string) []components.SearchResult {
 			})
 		}
 
-		// Recurse into subgroups
 		for i := range group.Groups {
 			searchGroup(&group.Groups[i], currentPath)
 		}
 	}
 
-	// Search all top-level groups
 	for i := range a.config.Groups {
 		searchGroup(&a.config.Groups[i], []string{})
 	}
 
-	// Filter results using fuzzy search
 	return components.FuzzySearchItems(results, query)
 }
 
-// resolveGroupPath converts group names to group pointers
 func (a *App) resolveGroupPath(names []string) []*config.Group {
 	if len(names) == 0 {
 		return []*config.Group{}
@@ -898,7 +834,138 @@ func (a *App) resolveGroupPath(names []string) []*config.Group {
 	return path
 }
 
-// Refresh ticker methods
+func (a *App) setupCommands() {
+	cmds := []components.Command{
+		{Name: "quit", Aliases: []string{"q", "exit"}, Description: "Exit the application"},
+		{Name: "refresh", Aliases: []string{"r"}, Description: "Refresh current view"},
+		{Name: "search", Aliases: []string{"s", "find"}, Description: "Open global search"},
+		{Name: "help", Aliases: []string{"h", "?"}, Description: "Show help"},
+		{Name: "pin", Aliases: []string{"p"}, Description: "Pin/unpin selected workflow"},
+		{Name: "open", Aliases: []string{"o", "web", "browser"}, Description: "Open in browser"},
+		{Name: "sidebar", Aliases: []string{"1"}, Description: "Toggle sidebar"},
+		{Name: "back", Aliases: []string{"b"}, Description: "Go back"},
+	}
+	a.cmdPalette.SetCommands(cmds)
+}
+
+func (a *App) executeCommand(cmd *components.Command) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
+	switch cmd.Name {
+	case "quit":
+		a.stopRefreshTicker()
+		a.saveState()
+		return a, tea.Quit
+
+	case "refresh":
+		if a.selectedWorkflow != "" && !a.loading {
+			a.loading = true
+			a.runsTable.SetLoading(true)
+			cmds = append(cmds, a.spinner.Start("Refreshing..."))
+			cmds = append(cmds, a.fetchWorkflowRunsCmd)
+		}
+
+	case "search":
+		a.search.Open()
+
+	case "help":
+		a.helpOverlay.Toggle()
+
+	case "pin":
+		return a.handlePinAction()
+
+	case "open":
+		return a.handleOpenAction()
+
+	case "sidebar":
+		a.showSidebar = !a.showSidebar
+		if !a.showSidebar && a.focusArea == FocusSidebar {
+			a.focusArea = FocusMain
+		}
+		a.updateFocus()
+		return a.handleResize(tea.WindowSizeMsg{Width: a.width, Height: a.height})
+
+	case "back":
+		if a.viewMode == ViewRuns {
+			a.viewMode = ViewGroups
+			a.selectedWorkflow = ""
+			a.selectedGroup = nil
+			a.stopRefreshTicker()
+			a.updateFocus()
+			a.updateStatusBar()
+		} else if len(a.groupPath) > 0 {
+			a.groupPath = a.groupPath[:len(a.groupPath)-1]
+			a.refreshNavList()
+			a.saveState()
+		}
+	}
+
+	if len(cmds) > 0 {
+		return a, tea.Batch(cmds...)
+	}
+	return a, nil
+}
+
+func (a *App) handlePinAction() (tea.Model, tea.Cmd) {
+	if a.focusArea == FocusSidebar {
+		if item := a.sidebar.SelectedItem(); item != nil {
+			if group, ok := item.Data.(*config.Group); ok {
+				group.TogglePin(item.WorkflowName)
+				if err := a.config.Save(a.configPath); err != nil {
+					return a, a.toaster.Error("Failed to save")
+				}
+				a.refreshPinnedList()
+				a.refreshNavList()
+				a.saveState()
+				return a, a.toaster.Success("Unpinned workflow")
+			}
+		}
+	} else if a.viewMode == ViewGroups && len(a.groupPath) > 0 {
+		if item := a.navList.SelectedItem(); item != nil {
+			if navItem, ok := item.Data.(*navItemData); ok && !navItem.isGroup {
+				currentGroup := a.groupPath[len(a.groupPath)-1]
+				wasPinned := currentGroup.IsPinned(navItem.workflowName)
+				currentGroup.TogglePin(navItem.workflowName)
+				if err := a.config.Save(a.configPath); err != nil {
+					return a, a.toaster.Error("Failed to save")
+				}
+				a.refreshNavList()
+				a.refreshPinnedList()
+				a.saveState()
+				if wasPinned {
+					return a, a.toaster.Success("Unpinned workflow")
+				}
+				return a, a.toaster.Success("Pinned workflow")
+			}
+		}
+	}
+	return a, nil
+}
+
+func (a *App) handleOpenAction() (tea.Model, tea.Cmd) {
+	var err error
+	if a.focusArea == FocusSidebar {
+		if item := a.sidebar.SelectedItem(); item != nil {
+			err = a.gh.OpenWorkflowInBrowser(item.WorkflowName)
+		}
+	} else if a.viewMode == ViewGroups {
+		if item := a.navList.SelectedItem(); item != nil {
+			if navItem, ok := item.Data.(*navItemData); ok && !navItem.isGroup {
+				err = a.gh.OpenWorkflowInBrowser(navItem.workflowName)
+			}
+		}
+	} else if a.viewMode == ViewRuns {
+		runID := a.runsTable.SelectedRunID()
+		if runID > 0 {
+			err = a.gh.OpenRunInBrowser(runID)
+		}
+	}
+
+	if err != nil {
+		return a, a.toaster.Error("Failed to open browser")
+	}
+	return a, a.toaster.Info("Opening in browser...")
+}
 
 func (a *App) startRefreshTicker() {
 	if a.refreshInterval <= 0 || !a.autoRefreshEnabled {
@@ -929,19 +996,17 @@ func (a *App) fetchWorkflowRunsCmd() tea.Msg {
 	return workflowRunsMsg{runs: runs, err: err}
 }
 
-// State persistence
-
 func (a *App) saveState() {
 	s := &state.NavigationState{
 		GroupPath: state.ExtractGroupIDs(a.groupPath),
 		ListIndex: a.navList.Cursor(),
 	}
 
-	if a.selectedWorkflow != "" {
+	if a.viewMode == ViewRuns && a.selectedWorkflow != "" {
 		s.ViewState = state.ViewWorkflowOutput
 		s.SelectedWorkflow = a.selectedWorkflow
 		s.FromPinnedView = a.selectedGroup != nil
-	} else if a.activeView == ViewSidebar {
+	} else if a.focusArea == FocusSidebar {
 		s.ViewState = state.ViewPinnedWorkflows
 		s.PinnedListIndex = a.sidebar.Cursor()
 	} else {
@@ -959,7 +1024,6 @@ func (a *App) restoreState() {
 		return
 	}
 
-	// Restore group path
 	if len(savedState.GroupPath) > 0 {
 		resolvedPath, ok := state.ResolveGroupPath(a.config, savedState.GroupPath)
 		if ok && len(resolvedPath) > 0 {
@@ -968,31 +1032,27 @@ func (a *App) restoreState() {
 		}
 	}
 
-	// Restore list selection
 	if savedState.ListIndex > 0 {
 		a.navList.SetCursor(savedState.ListIndex)
 	}
 
-	// Restore view state
 	switch savedState.ViewState {
 	case state.ViewPinnedWorkflows:
 		if len(a.config.GetAllPinnedWorkflows()) > 0 {
-			a.activeView = ViewSidebar
+			a.focusArea = FocusSidebar
 		}
 	case state.ViewWorkflowOutput:
 		if savedState.SelectedWorkflow != "" {
 			a.selectedWorkflow = savedState.SelectedWorkflow
-			a.details.SetWorkflow(savedState.SelectedWorkflow)
-			// Fetch runs
+			a.viewMode = ViewRuns
+			a.runsTable.SetVisible(true)
 			runs, err := a.gh.GetWorkflowRuns(savedState.SelectedWorkflow, 20)
 			if err != nil {
 				a.err = err
 			} else {
 				a.workflowRuns = runs
-				a.details.SetRuns(runs)
 				a.runsTable.SetRuns(runs, savedState.SelectedWorkflow)
 			}
-			a.activeView = ViewDetails
 		}
 	}
 
@@ -1000,65 +1060,56 @@ func (a *App) restoreState() {
 	a.updateStatusBar()
 }
 
-// renderLayout renders the main layout
 func (a *App) renderLayout() string {
-	// Calculate panel dimensions
+	barHeight := 2
+	panelHeight := a.height - barHeight - 2
+
 	sidebarWidth := 0
 	if a.showSidebar {
 		sidebarWidth = max(25, a.width/5)
 	}
 	mainWidth := a.width - sidebarWidth
 	if a.showSidebar {
-		mainWidth -= 2 // Border spacing
+		mainWidth -= 2
 	}
 
-	// Split main area
-	navWidth := mainWidth * 2 / 3
-	detailsWidth := mainWidth - navWidth
-
-	// Calculate heights
-	panelHeight := a.height - 2 // Status + help bars
-	runsHeight := 0
-	if a.showRuns {
-		runsHeight = max(10, panelHeight/3)
-		panelHeight = panelHeight - runsHeight - 2
+	var mainView string
+	if a.viewMode == ViewRuns {
+		a.runsTable.SetSize(mainWidth-2, panelHeight-2)
+		mainView = a.wrapPanel(a.runsTable.View(), a.focusArea == FocusMain)
+	} else {
+		a.navList.SetSize(mainWidth-2, panelHeight-2)
+		mainView = a.wrapPanel(a.navList.View(), a.focusArea == FocusMain)
 	}
 
-	// Build top panels
-	var panels []string
-
+	var topRow string
 	if a.showSidebar {
 		a.sidebar.SetSize(sidebarWidth-2, panelHeight-2)
-		sidebarView := a.wrapPanel(a.sidebar.View(), a.activeView == ViewSidebar)
-		panels = append(panels, sidebarView)
+		sidebarView := a.wrapPanel(a.sidebar.View(), a.focusArea == FocusSidebar)
+		topRow = lipgloss.JoinHorizontal(lipgloss.Top, sidebarView, mainView)
+	} else {
+		topRow = mainView
 	}
 
-	a.navList.SetSize(navWidth-2, panelHeight-2)
-	navView := a.wrapPanel(a.navList.View(), a.activeView == ViewNavigation)
-	panels = append(panels, navView)
-
-	a.details.SetSize(detailsWidth-2, panelHeight-2)
-	detailsView := a.wrapPanel(a.details.View(), a.activeView == ViewDetails)
-	panels = append(panels, detailsView)
-
-	topRow := lipgloss.JoinHorizontal(lipgloss.Top, panels...)
-
-	// Add runs panel if visible
-	if a.showRuns {
-		a.runsTable.SetSize(a.width-4, runsHeight-2)
-		runsView := a.wrapPanel(a.runsTable.View(), a.activeView == ViewRuns)
-		topRow = lipgloss.JoinVertical(lipgloss.Left, topRow, runsView)
-	}
-
-	// Add status and help bars
 	a.updateStatusBar()
 	statusView := a.statusBar.View()
 	helpView := a.helpBar.View()
 
-	return lipgloss.JoinVertical(lipgloss.Left, topRow, statusView, helpView)
+	layout := lipgloss.JoinVertical(lipgloss.Left, topRow, statusView, helpView)
+
+	if a.toaster.HasToasts() {
+		toastView := a.toaster.View()
+		layout = lipgloss.JoinVertical(lipgloss.Left, toastView, layout)
+	}
+
+	if a.spinner.IsActive() {
+		spinnerView := a.spinner.View()
+		layout = lipgloss.JoinVertical(lipgloss.Left, spinnerView, layout)
+	}
+
+	return layout
 }
 
-// wrapPanel wraps a panel with a border
 func (a *App) wrapPanel(content string, active bool) string {
 	style := a.theme.BorderNormal
 	if active {
@@ -1067,7 +1118,6 @@ func (a *App) wrapPanel(content string, active bool) string {
 	return style.Render(content)
 }
 
-// RunApp runs the application
 func RunApp(app *App) error {
 	p := tea.NewProgram(app, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
@@ -1076,7 +1126,6 @@ func RunApp(app *App) error {
 	return nil
 }
 
-// NewAppFromMenuOptions creates an App from the legacy MenuOptions for backwards compatibility
 func NewAppFromMenuOptions(cfg *config.Config, configPath string, gh *github.Client, opts MenuOptions) *App {
 	return NewApp(cfg, configPath, gh, AppOptions{
 		StartWithPinned: opts.StartWithPinned,

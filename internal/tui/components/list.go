@@ -176,23 +176,30 @@ func (l *List) Update(msg tea.Msg) tea.Cmd {
 }
 
 func (l *List) handleKey(msg tea.KeyMsg) tea.Cmd {
-	// Handle filter mode
 	if l.filterActive {
 		switch msg.String() {
 		case "enter":
 			l.filterActive = false
-			l.cursor = 0
 			return nil
 		case "esc":
 			l.filterActive = false
 			l.filterInput = ""
 			l.applyFilter()
+			l.cursor = 0
+			return nil
+		case "ctrl+n", "down":
+			l.moveDown()
+			return nil
+		case "ctrl+p", "up":
+			l.moveUp()
 			return nil
 		case "backspace":
 			if len(l.filterInput) > 0 {
 				l.filterInput = l.filterInput[:len(l.filterInput)-1]
 				l.applyFilter()
-				l.cursor = 0
+				if l.cursor >= len(l.filteredItems) {
+					l.cursor = max(0, len(l.filteredItems)-1)
+				}
 			}
 			return nil
 		default:
@@ -200,13 +207,14 @@ func (l *List) handleKey(msg tea.KeyMsg) tea.Cmd {
 			if len(key) == 1 {
 				l.filterInput += key
 				l.applyFilter()
-				l.cursor = 0
+				if l.cursor >= len(l.filteredItems) {
+					l.cursor = max(0, len(l.filteredItems)-1)
+				}
 			}
 			return nil
 		}
 	}
 
-	// Normal mode navigation
 	switch msg.String() {
 	case "/":
 		l.StartFilter()
@@ -226,6 +234,16 @@ func (l *List) handleKey(msg tea.KeyMsg) tea.Cmd {
 	case "esc":
 		if l.filterInput != "" {
 			l.ClearFilter()
+		}
+		return nil
+	case "n":
+		if l.filterInput != "" {
+			l.moveDown()
+		}
+		return nil
+	case "N":
+		if l.filterInput != "" {
+			l.moveUp()
 		}
 		return nil
 	}
@@ -351,12 +369,11 @@ func (l *List) View() string {
 		b.WriteString(strings.Repeat("\n", remaining))
 	}
 
-	// Help hints
 	var hints string
 	if l.filterActive {
-		hints = "[enter] apply [esc] cancel"
+		hints = "[↑/↓] navigate [enter] done [esc] clear"
 	} else if l.filterInput != "" {
-		hints = "[j/k] nav [enter] select [esc] clear"
+		hints = "[n/N] next/prev [esc] clear"
 	} else {
 		hints = "[j/k] nav [/] filter"
 	}

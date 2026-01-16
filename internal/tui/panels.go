@@ -742,7 +742,6 @@ func (m MenuModel) renderSearchOverlay() string {
 	overlayBox := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("69")).
-		Background(lipgloss.Color("235")).
 		Render(overlayContent)
 
 	// Center the overlay
@@ -752,6 +751,5 @@ func (m MenuModel) renderSearchOverlay() string {
 		lipgloss.Center,
 		lipgloss.Center,
 		overlayBox,
-		lipgloss.WithWhitespaceBackground(lipgloss.Color("0")),
 	)
 }

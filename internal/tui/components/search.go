@@ -263,7 +263,6 @@ func (s *Search) View() string {
 		Render(b.String())
 
 	overlayBox := s.theme.BorderActive.
-		Background(s.theme.Colors.BgSecondary).
 		Render(overlayContent)
 
 	// Center the overlay
@@ -273,7 +272,6 @@ func (s *Search) View() string {
 		lipgloss.Center,
 		lipgloss.Center,
 		overlayBox,
-		lipgloss.WithWhitespaceBackground(lipgloss.Color("0")),
 	)
 }
 
