@@ -72,6 +72,9 @@ type MenuModel struct {
 	globalSearchInput   string
 	globalSearchResults []SearchResult
 	globalSearchIndex   int
+
+	// Help modal
+	helpModalActive bool
 }
 
 type MenuOptions struct {

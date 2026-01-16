@@ -10,9 +10,12 @@ func (m MenuModel) renderMultiPanelLayout() string {
 		return ""
 	}
 
-	// Show search overlay if global search is active
+	// Show modals if active
 	if m.globalSearchActive {
 		return m.renderSearchOverlay()
+	}
+	if m.helpModalActive {
+		return m.renderHelpModal()
 	}
 
 	// Calculate panel dimensions with minimum widths

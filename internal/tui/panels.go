@@ -7,7 +7,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// PanelType represents which panel is currently focused
 type PanelType int
 
 const (
@@ -17,11 +16,9 @@ const (
 	RunsPanel
 )
 
-// renderSidebar renders the left sidebar panel with pinned workflows
 func (m MenuModel) renderSidebar(width, height int) string {
 	var content strings.Builder
 
-	// Title
 	title := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("blue")).
@@ -32,7 +29,6 @@ func (m MenuModel) renderSidebar(width, height int) string {
 	content.WriteString(strings.Repeat("─", width-4))
 	content.WriteString("\n")
 
-	// Show filter input if filtering is active
 	if m.sidebarFilterActive {
 		filterPrompt := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("69")).
@@ -50,7 +46,6 @@ func (m MenuModel) renderSidebar(width, height int) string {
 	}
 	content.WriteString("\n")
 
-	// Get all items and apply custom filter
 	allItems := m.pinnedList.Items()
 	items := filterPinnedItems(allItems, m.sidebarFilterInput)
 
@@ -60,7 +55,6 @@ func (m MenuModel) renderSidebar(width, height int) string {
 			Render("  No pinned workflows =(")
 		content.WriteString(emptyText)
 	} else {
-		// Calculate visible window (each item takes 3 lines)
 		linesPerItem := 3
 		maxVisible := max(1, (height-10)/linesPerItem)
 		visibleStart := 0
@@ -71,12 +65,10 @@ func (m MenuModel) renderSidebar(width, height int) string {
 			visibleStart = max(0, cursor-maxVisible/2)
 			visibleEnd = min(len(items), visibleStart+maxVisible)
 
-			// Adjust if we're at the end
 			if visibleEnd == len(items) && visibleEnd-visibleStart < maxVisible {
 				visibleStart = max(0, visibleEnd-maxVisible)
 			}
 
-			// Show scroll indicator
 			scrollInfo := lipgloss.NewStyle().
 				Foreground(lipgloss.Color("240")).
 				Render(fmt.Sprintf("  (%d-%d of %d)", visibleStart+1, visibleEnd, len(items)))
@@ -91,7 +83,6 @@ func (m MenuModel) renderSidebar(width, height int) string {
 				continue
 			}
 
-			// Use filtered index if filtering is active
 			var isSelected bool
 			if m.sidebarFilterInput != "" {
 				isSelected = m.activePanel == SidebarPanel && i == m.sidebarFilteredIndex
@@ -106,7 +97,6 @@ func (m MenuModel) renderSidebar(width, height int) string {
 				fgColor = lipgloss.Color("blue")
 			}
 
-			// Truncate long workflow names
 			workflowName := pli.workflowName
 			maxNameWidth := width - 8
 			if len(workflowName) > maxNameWidth {
@@ -117,7 +107,6 @@ func (m MenuModel) renderSidebar(width, height int) string {
 				Foreground(fgColor).
 				Render(fmt.Sprintf("%s%s", prefix, workflowName))
 
-			// Truncate long group names
 			groupName := pli.group.Name
 			maxGroupWidth := width - 8
 			if len(groupName) > maxGroupWidth {
@@ -139,14 +128,12 @@ func (m MenuModel) renderSidebar(width, height int) string {
 		}
 	}
 
-	// Fill remaining space
 	lines := strings.Split(content.String(), "\n")
 	remainingHeight := height - len(lines) - 2
 	if remainingHeight > 0 {
 		content.WriteString(strings.Repeat("\n", remainingHeight))
 	}
 
-	// Help hint at bottom
 	var hintText string
 	if m.sidebarFilterActive {
 		hintText = "[enter] apply filter | [esc] cancel"
@@ -167,11 +154,9 @@ func (m MenuModel) renderSidebar(width, height int) string {
 		Render(content.String())
 }
 
-// renderNavigation renders the center navigation panel with group hierarchy
 func (m MenuModel) renderNavigation(width, height int) string {
 	var content strings.Builder
 
-	// Title with current path
 	var titleText string
 	if len(m.groupPath) == 0 {
 		titleText = "📁 Browse Groups"
@@ -193,7 +178,6 @@ func (m MenuModel) renderNavigation(width, height int) string {
 	content.WriteString(strings.Repeat("─", width-4))
 	content.WriteString("\n")
 
-	// Show filter input if filtering is active
 	if m.navigationFilterActive {
 		filterPrompt := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("69")).
@@ -211,30 +195,24 @@ func (m MenuModel) renderNavigation(width, height int) string {
 	}
 	content.WriteString("\n")
 
-	// Get all items and apply custom filter
 	allItems := m.list.Items()
 	items := filterNavigationItems(allItems, m.navigationFilterInput)
 	visibleStart := 0
 	visibleEnd := len(items)
 
-	// Calculate visible window
-	// Each item takes 2 lines (title + description)
 	linesPerItem := 2
-	maxVisible := max(1, (height-8)/linesPerItem) // At least show 1 item
+	maxVisible := max(1, (height-8)/linesPerItem)
 
 	if len(items) > maxVisible {
 		cursor := m.list.Index()
-		// Center the cursor in the viewport
 		visibleStart = max(0, cursor-maxVisible/2)
 		visibleEnd = min(len(items), visibleStart+maxVisible)
 
-		// Adjust if we're at the end
 		if visibleEnd == len(items) && visibleEnd-visibleStart < maxVisible {
 			visibleStart = max(0, visibleEnd-maxVisible)
 		}
 	}
 
-	// Show scroll indicator if needed
 	if len(items) > maxVisible {
 		scrollInfo := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("240")).
@@ -246,7 +224,6 @@ func (m MenuModel) renderNavigation(width, height int) string {
 	for i := visibleStart; i < visibleEnd; i++ {
 		item := items[i].(listItem)
 
-		// Use filtered index if filtering is active
 		var isSelected bool
 		if m.navigationFilterInput != "" {
 			isSelected = m.activePanel == NavigationPanel && i == m.navigationFilteredIndex
@@ -261,8 +238,6 @@ func (m MenuModel) renderNavigation(width, height int) string {
 			fgColor = lipgloss.Color("blue")
 		}
 
-		// Items already have icons from buildListItems, so just render them
-		// Truncate long titles to fit width
 		title := item.Title()
 		maxTitleWidth := width - 10
 		if len(title) > maxTitleWidth {
@@ -276,7 +251,6 @@ func (m MenuModel) renderNavigation(width, height int) string {
 		content.WriteString(itemLine)
 		content.WriteString("\n")
 
-		// Show description in gray, also truncated
 		if item.Description() != "" {
 			desc := item.Description()
 			maxDescWidth := width - 10
@@ -292,7 +266,6 @@ func (m MenuModel) renderNavigation(width, height int) string {
 		}
 	}
 
-	// Help hint
 	var hintText string
 	if m.navigationFilterActive {
 		hintText = "[enter] apply | [esc] cancel filter"
@@ -319,7 +292,6 @@ func (m MenuModel) renderNavigation(width, height int) string {
 		Render(content.String())
 }
 
-// renderDetails renders the right details panel with workflow info
 func (m MenuModel) renderDetails(width, height int) string {
 	var content strings.Builder
 
@@ -334,13 +306,11 @@ func (m MenuModel) renderDetails(width, height int) string {
 	content.WriteString("\n\n")
 
 	if m.selectedWorkflow == "" {
-		// No workflow selected
 		emptyText := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("240")).
 			Render("  Select a workflow to\n  view details")
 		content.WriteString(emptyText)
 	} else {
-		// Show workflow name
 		nameLabel := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("240")).
 			Render("Workflow:")
@@ -363,12 +333,10 @@ func (m MenuModel) renderDetails(width, height int) string {
 			content.WriteString(recentLabel)
 			content.WriteString("\n\n")
 
-			// Show up to 3 most recent runs
 			displayCount := min(3, len(m.workflowRuns))
 			for i := range displayCount {
 				run := m.workflowRuns[i]
 
-				// Status icon
 				statusIcon := "●"
 				statusColor := lipgloss.Color("240")
 				switch run.Status {
@@ -398,7 +366,6 @@ func (m MenuModel) renderDetails(width, height int) string {
 
 			content.WriteString("\n")
 
-			// Show hint to view full table
 			hintText := lipgloss.NewStyle().
 				Foreground(lipgloss.Color("240")).
 				Render("[r] View all runs")
@@ -416,12 +383,10 @@ func (m MenuModel) renderDetails(width, height int) string {
 		}
 	}
 
-	// Help hint
 	hint := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("240")).
 		Render("[d] Focus details")
 
-	// Fill remaining space and add hint at bottom
 	lines := strings.Split(content.String(), "\n")
 	remainingHeight := height - len(lines) - 2
 	if remainingHeight > 0 {
@@ -436,7 +401,6 @@ func (m MenuModel) renderDetails(width, height int) string {
 		Render(content.String())
 }
 
-// renderRunsPanel renders the bottom expandable panel with full workflow runs table
 func (m MenuModel) renderRunsPanel(width, height int) string {
 	if !m.showRunsPanel {
 		return ""
@@ -444,7 +408,6 @@ func (m MenuModel) renderRunsPanel(width, height int) string {
 
 	var content strings.Builder
 
-	// Title
 	titleText := fmt.Sprintf("📋 Workflow Runs: %s", m.selectedWorkflow)
 
 	title := lipgloss.NewStyle().
@@ -455,7 +418,6 @@ func (m MenuModel) renderRunsPanel(width, height int) string {
 	content.WriteString(title)
 	content.WriteString("\n")
 
-	// Show total runs count
 	runsInfo := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("240")).
 		Render(fmt.Sprintf("Total: %d runs", len(m.workflowRuns)))
@@ -478,7 +440,6 @@ func (m MenuModel) renderRunsPanel(width, height int) string {
 
 	content.WriteString("\n")
 
-	// Keybindings hint
 	hint := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("240")).
 		Render("[w] open run | [esc] close | Use j/k or ↑/↓ to navigate")
@@ -490,7 +451,6 @@ func (m MenuModel) renderRunsPanel(width, height int) string {
 		Render(content.String())
 }
 
-// renderBreadcrumb renders the breadcrumb bar showing current location
 func (m MenuModel) renderBreadcrumb() string {
 	parts := []string{fmt.Sprintf("📦 %s", m.config.Repository)}
 
@@ -512,14 +472,11 @@ func (m MenuModel) renderBreadcrumb() string {
 		Render(breadcrumbText)
 }
 
-// renderStatusBar renders the refresh status bar
 func (m MenuModel) renderStatusBar() string {
 	if m.refreshInterval <= 0 {
-		// No status bar if refresh is not configured
 		return ""
 	}
 
-	// Determine refresh status and color
 	autoRefreshSymbol := "✗"
 	refreshColor := lipgloss.Color("red")
 	if m.autoRefreshEnabled {
@@ -539,14 +496,11 @@ func (m MenuModel) renderStatusBar() string {
 		Render(statusContent)
 }
 
-// renderHelpBar renders the help bar with available keybindings
 func (m MenuModel) renderHelpBar() string {
 	var keys []string
 
-	// Global keys
-	keys = append(keys, "[q]uit", "[tab] cycle panels", "[Ctrl+f] search")
+	keys = append(keys, "[q]uit", "[?] help", "[Ctrl+f] search")
 
-	// Panel-specific keys
 	switch m.activePanel {
 	case SidebarPanel:
 		keys = append(keys, "[enter]select", "[p]unpin", "[w]web")
@@ -564,7 +518,6 @@ func (m MenuModel) renderHelpBar() string {
 		keys = append(keys, "[w]open run", "[esc]close")
 	}
 
-	// Add refresh shortcuts if a workflow is selected and refresh is configured
 	if m.selectedWorkflow != "" && m.refreshInterval > 0 {
 		keys = append(keys, "[Ctrl+R]refresh", "[Ctrl+Shift+R]toggle")
 	}
@@ -579,13 +532,12 @@ func (m MenuModel) renderHelpBar() string {
 		Render(helpText)
 }
 
-// panelBorder wraps content with a border, highlighting if active
 func (m MenuModel) panelBorder(content string, panelType PanelType) string {
 	isActive := m.activePanel == panelType
 
-	borderColor := lipgloss.Color("240") // Dim gray
+	borderColor := lipgloss.Color("240")
 	if isActive {
-		borderColor = lipgloss.Color("blue") // Bright blue
+		borderColor = lipgloss.Color("blue")
 	}
 
 	return lipgloss.NewStyle().
@@ -594,71 +546,74 @@ func (m MenuModel) panelBorder(content string, panelType PanelType) string {
 		Render(content)
 }
 
-// renderSearchOverlay renders the global search modal overlay
 func (m MenuModel) renderSearchOverlay() string {
-	// Calculate overlay dimensions (centered, 60% width, 70% height)
 	overlayWidth := max(50, m.width*60/100)
 	overlayHeight := max(15, m.height*70/100)
 
+	bgColor := lipgloss.Color("236")
+	dimColor := lipgloss.Color("245")
+	accentColor := lipgloss.Color("blue")
+	textColor := lipgloss.Color("252")
+
 	var content strings.Builder
 
-	// Title
 	title := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("69")).
+		Foreground(accentColor).
 		Render("Global Search")
+
+	separator := lipgloss.NewStyle().
+		Foreground(dimColor).
+		Render(strings.Repeat("─", overlayWidth-6))
 
 	content.WriteString(title)
 	content.WriteString("\n")
-	content.WriteString(strings.Repeat("─", overlayWidth-4))
+	content.WriteString(separator)
 	content.WriteString("\n\n")
 
-	// Search input
 	inputStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("white")).
-		Background(lipgloss.Color("236")).
+		Foreground(textColor).
+		Background(lipgloss.Color("238")).
 		Padding(0, 1)
 
-	cursor := "█"
-	inputText := m.globalSearchInput + cursor
+	cursor := lipgloss.NewStyle().Foreground(accentColor).Render("█")
+	var inputText string
 	if m.globalSearchInput == "" {
 		inputText = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
-			Render("Type to search groups and workflows...") + cursor
+			Foreground(dimColor).
+			Render("Type to search...") + cursor
+	} else {
+		inputText = m.globalSearchInput + cursor
 	}
 
 	searchIcon := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("69")).
-		Render("🔍 ")
+		Foreground(accentColor).
+		Render("  ")
 
 	content.WriteString(searchIcon)
 	content.WriteString(inputStyle.Render(inputText))
 	content.WriteString("\n\n")
 
-	// Results
 	if m.globalSearchInput == "" {
 		hintText := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
-			Render("  Start typing to search through all groups and workflows")
+			Foreground(dimColor).
+			Render("  Search groups, workflows, and descriptions")
 		content.WriteString(hintText)
 	} else if len(m.globalSearchResults) == 0 {
 		noResultsText := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
+			Foreground(dimColor).
 			Render("  No results found")
 		content.WriteString(noResultsText)
 	} else {
-		// Show results count
 		countText := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
+			Foreground(dimColor).
 			Render(fmt.Sprintf("  %d results", len(m.globalSearchResults)))
 		content.WriteString(countText)
 		content.WriteString("\n\n")
 
-		// Calculate how many results we can show
 		linesPerResult := 2
-		maxResults := max(1, (overlayHeight-10)/linesPerResult)
+		maxResults := max(1, (overlayHeight-12)/linesPerResult)
 
-		// Adjust visible window based on selection
 		visibleStart := 0
 		visibleEnd := min(len(m.globalSearchResults), maxResults)
 
@@ -671,35 +626,28 @@ func (m MenuModel) renderSearchOverlay() string {
 			result := m.globalSearchResults[i]
 			isSelected := i == m.globalSearchIndex
 
-			// Prefix and styling based on selection
 			prefix := "  "
-			nameColor := lipgloss.Color("white")
+			nameStyle := lipgloss.NewStyle().Foreground(textColor)
 			if isSelected {
 				prefix = "> "
-				nameColor = lipgloss.Color("69")
+				nameStyle = lipgloss.NewStyle().Foreground(accentColor).Bold(true)
 			}
 
-			// Icon based on type
-			icon := "📂"
+			icon := "📁"
 			if result.Type == "workflow" {
 				icon = "📄"
 			}
 
-			// Truncate name if needed
 			name := result.Name
 			maxNameWidth := overlayWidth - 15
 			if len(name) > maxNameWidth {
 				name = name[:maxNameWidth-3] + "..."
 			}
 
-			nameLine := lipgloss.NewStyle().
-				Foreground(nameColor).
-				Render(fmt.Sprintf("%s%s %s", prefix, icon, name))
-
+			nameLine := nameStyle.Render(fmt.Sprintf("%s%s %s", prefix, icon, name))
 			content.WriteString(nameLine)
 			content.WriteString("\n")
 
-			// Show path
 			pathText := formatGroupPath(result.GroupPath)
 			if result.Type == "workflow" && result.Description != result.Name {
 				pathText = pathText + " / " + result.Description
@@ -709,49 +657,143 @@ func (m MenuModel) renderSearchOverlay() string {
 				pathText = pathText[:maxPathWidth-3] + "..."
 			}
 
-			pathLine := lipgloss.NewStyle().
-				Foreground(lipgloss.Color("240")).
+			pathLine := lipgloss.NewStyle().Foreground(dimColor).
 				Render(fmt.Sprintf("     %s", pathText))
 			content.WriteString(pathLine)
 			content.WriteString("\n")
 		}
 
-		// Show scroll indicator if needed
 		if len(m.globalSearchResults) > maxResults {
 			scrollInfo := lipgloss.NewStyle().
-				Foreground(lipgloss.Color("240")).
+				Foreground(dimColor).
 				Render(fmt.Sprintf("\n  (%d-%d of %d)", visibleStart+1, visibleEnd, len(m.globalSearchResults)))
 			content.WriteString(scrollInfo)
 		}
 	}
 
-	// Help hint at bottom
 	content.WriteString("\n\n")
 	hint := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240")).
-		Render("[↑/↓] navigate | [enter] select | [esc] close")
+		Foreground(dimColor).
+		Render("↑/↓ navigate  enter select  esc close")
 	content.WriteString(hint)
 
-	// Create the overlay box
 	overlayContent := lipgloss.NewStyle().
 		Width(overlayWidth-4).
 		Height(overlayHeight-2).
 		Padding(1, 2).
+		Background(bgColor).
 		Render(content.String())
 
 	overlayBox := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("69")).
-		Background(lipgloss.Color("235")).
+		BorderForeground(accentColor).
+		Background(bgColor).
 		Render(overlayContent)
 
-	// Center the overlay
 	return lipgloss.Place(
 		m.width,
 		m.height,
 		lipgloss.Center,
 		lipgloss.Center,
 		overlayBox,
-		lipgloss.WithWhitespaceBackground(lipgloss.Color("0")),
+	)
+}
+
+func (m MenuModel) renderHelpModal() string {
+	overlayWidth := max(55, m.width*50/100)
+	overlayHeight := max(20, m.height*60/100)
+
+	bgColor := lipgloss.Color("236")
+	dimColor := lipgloss.Color("245")
+	accentColor := lipgloss.Color("blue")
+	textColor := lipgloss.Color("252")
+	keyColor := lipgloss.Color("214")
+
+	var content strings.Builder
+
+	title := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(accentColor).
+		Render("Keyboard Shortcuts")
+
+	separator := lipgloss.NewStyle().
+		Foreground(dimColor).
+		Render(strings.Repeat("─", overlayWidth-6))
+
+	content.WriteString(title)
+	content.WriteString("\n")
+	content.WriteString(separator)
+	content.WriteString("\n\n")
+
+	renderKey := func(key, desc string) string {
+		keyStyle := lipgloss.NewStyle().
+			Foreground(keyColor).
+			Width(12)
+		descStyle := lipgloss.NewStyle().
+			Foreground(textColor)
+		return keyStyle.Render(key) + descStyle.Render(desc) + "\n"
+	}
+
+	renderSection := func(title string) string {
+		return lipgloss.NewStyle().
+			Foreground(accentColor).
+			Bold(true).
+			Render(title) + "\n"
+	}
+
+	content.WriteString(renderSection("Global"))
+	content.WriteString(renderKey("q", "Quit"))
+	content.WriteString(renderKey("?", "Show this help"))
+	content.WriteString(renderKey("Ctrl+f", "Global search"))
+	content.WriteString(renderKey("Tab", "Next panel"))
+	content.WriteString(renderKey("Shift+Tab", "Previous panel"))
+	content.WriteString("\n")
+
+	content.WriteString(renderSection("Panel Focus"))
+	content.WriteString(renderKey("s", "Focus sidebar (pinned)"))
+	content.WriteString(renderKey("g", "Focus navigation (groups)"))
+	content.WriteString(renderKey("d", "Focus details"))
+	content.WriteString(renderKey("r", "Toggle runs panel"))
+	content.WriteString("\n")
+
+	content.WriteString(renderSection("Navigation"))
+	content.WriteString(renderKey("j / ↓", "Move down"))
+	content.WriteString(renderKey("k / ↑", "Move up"))
+	content.WriteString(renderKey("Enter / l", "Select / Enter group"))
+	content.WriteString(renderKey("Esc / h", "Go back / Close"))
+	content.WriteString(renderKey("/", "Filter current panel"))
+	content.WriteString("\n")
+
+	content.WriteString(renderSection("Actions"))
+	content.WriteString(renderKey("p", "Pin/Unpin workflow"))
+	content.WriteString(renderKey("w", "Open in browser"))
+	content.WriteString(renderKey("Ctrl+r", "Refresh runs"))
+	content.WriteString(renderKey("Ctrl+t", "Toggle auto-refresh"))
+
+	content.WriteString("\n")
+	hint := lipgloss.NewStyle().
+		Foreground(dimColor).
+		Render("Press ? or Esc to close")
+	content.WriteString(hint)
+
+	overlayContent := lipgloss.NewStyle().
+		Width(overlayWidth-4).
+		Height(overlayHeight-2).
+		Padding(1, 2).
+		Background(bgColor).
+		Render(content.String())
+
+	overlayBox := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(accentColor).
+		Background(bgColor).
+		Render(overlayContent)
+
+	return lipgloss.Place(
+		m.width,
+		m.height,
+		lipgloss.Center,
+		lipgloss.Center,
+		overlayBox,
 	)
 }

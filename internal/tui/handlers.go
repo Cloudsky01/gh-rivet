@@ -26,16 +26,13 @@ func (m MenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.workflowRuns = msg.runs
 			m.table = buildWorkflowRunsTable(msg.runs, m.tablePageSize)
 		}
-		// Continue listening for refresh ticks
 		return m, m.getRefreshTickerCmd()
 	case refreshTickMsg:
-		// Auto-refresh timer fired - fetch workflow runs if not already loading
 		if m.selectedWorkflow != "" && !m.loading {
 			m.loading = true
 			cmds := []tea.Cmd{m.fetchWorkflowRunsCmd, m.getRefreshTickerCmd()}
 			return m, tea.Batch(cmds...)
 		}
-		// Continue listening for refresh ticks
 		return m, m.getRefreshTickerCmd()
 	}
 
@@ -67,9 +64,11 @@ func (m MenuModel) handleWindowResize(msg tea.WindowSizeMsg) MenuModel {
 }
 
 func (m MenuModel) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Handle global search mode first (takes priority over everything)
 	if m.globalSearchActive {
 		return m.updateGlobalSearch(msg)
+	}
+	if m.helpModalActive {
+		return m.updateHelpModal(msg)
 	}
 
 	if m.sidebarFilterActive || m.navigationFilterActive {
@@ -110,10 +109,8 @@ func (m MenuModel) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "ctrl+r":
-		// Manual refresh - fetch latest runs and restart the auto-refresh timer
 		if m.selectedWorkflow != "" && !m.loading {
 			m.loading = true
-			// Restart ticker if auto-refresh is enabled
 			if m.refreshInterval > 0 && m.autoRefreshEnabled {
 				m.startRefreshTicker()
 			}
@@ -122,7 +119,6 @@ func (m MenuModel) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "ctrl+t":
-		// Toggle auto-refresh
 		if m.refreshInterval > 0 {
 			m.autoRefreshEnabled = !m.autoRefreshEnabled
 			if m.autoRefreshEnabled {
@@ -141,11 +137,14 @@ func (m MenuModel) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "ctrl+f":
-		// Open global search
 		m.globalSearchActive = true
 		m.globalSearchInput = ""
 		m.globalSearchResults = nil
 		m.globalSearchIndex = 0
+		return m, nil
+
+	case "?":
+		m.helpModalActive = true
 		return m, nil
 	}
 
@@ -228,7 +227,6 @@ func (m MenuModel) updateSidebarPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "/":
-		// Start filtering
 		m.sidebarFilterActive = true
 		m.sidebarFilterInput = ""
 		m.sidebarFilteredIndex = 0
@@ -248,23 +246,18 @@ func (m MenuModel) updateSidebarPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "p":
-		// Unpin workflow
 		selectedItem, ok := m.pinnedList.SelectedItem().(pinnedListItem)
 		if ok {
 			selectedItem.group.TogglePin(selectedItem.workflowName)
-
 			if err := m.config.Save(m.configPath); err != nil {
 				m.err = fmt.Errorf("failed to save config: %w", err)
 			}
-
-			// Refresh pinned list
 			m.pinnedList.SetItems(buildPinnedListItems(m.config))
 			m.saveState()
 		}
 		return m, nil
 
 	case "w":
-		// Open workflow in browser
 		selectedItem, ok := m.pinnedList.SelectedItem().(pinnedListItem)
 		if ok {
 			if err := m.gh.OpenWorkflowInBrowser(selectedItem.workflowName); err != nil {
@@ -274,37 +267,30 @@ func (m MenuModel) updateSidebarPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	default:
-		// Pass through to list for navigation (j/k, up/down, etc.)
 		var cmd tea.Cmd
 		m.pinnedList, cmd = m.pinnedList.Update(msg)
 		return m, cmd
 	}
 }
 
-// updateNavigationPanel handles input when navigation panel is focused
 func (m MenuModel) updateNavigationPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Handle active filtering - capture all input
 	if m.navigationFilterActive {
 		switch msg.String() {
 		case "enter":
-			// Apply filter
 			m.navigationFilterActive = false
-			m.navigationFilteredIndex = 0 // Reset to first filtered item
+			m.navigationFilteredIndex = 0
 			return m, nil
 		case "esc":
-			// Cancel filter
 			m.navigationFilterActive = false
 			m.navigationFilterInput = ""
 			m.navigationFilteredIndex = 0
 			return m, nil
 		case "backspace":
-			// Remove last character
 			if len(m.navigationFilterInput) > 0 {
 				m.navigationFilterInput = m.navigationFilterInput[:len(m.navigationFilterInput)-1]
 			}
 			return m, nil
 		default:
-			// Add character to filter input (only printable chars)
 			key := msg.String()
 			if len(key) == 1 {
 				m.navigationFilterInput += key
@@ -313,7 +299,6 @@ func (m MenuModel) updateNavigationPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// If filter is applied, handle navigation through filtered items
 	if m.navigationFilterInput != "" {
 		allItems := m.list.Items()
 		filteredItems := filterNavigationItems(allItems, m.navigationFilterInput)
@@ -328,11 +313,9 @@ func (m MenuModel) updateNavigationPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if ok && !selectedItem.isGroup {
 					currentGroup := m.groupPath[len(m.groupPath)-1]
 					currentGroup.TogglePin(selectedItem.workflowName)
-
 					if err := m.config.Save(m.configPath); err != nil {
 						m.err = fmt.Errorf("failed to save config: %w", err)
 					}
-
 					m.list.SetItems(buildListItems(m.config, m.groupPath))
 					m.pinnedList.SetItems(buildPinnedListItems(m.config))
 					m.saveState()
@@ -340,24 +323,20 @@ func (m MenuModel) updateNavigationPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "esc":
-			// Clear filter
 			m.navigationFilterInput = ""
 			m.navigationFilteredIndex = 0
 			return m, nil
 		case "j", "down":
-			// Move down in filtered list
 			if m.navigationFilteredIndex < len(filteredItems)-1 {
 				m.navigationFilteredIndex++
 			}
 			return m, nil
 		case "k", "up":
-			// Move up in filtered list
 			if m.navigationFilteredIndex > 0 {
 				m.navigationFilteredIndex--
 			}
 			return m, nil
 		case "enter", "l":
-			// Select item from filtered list
 			if m.navigationFilteredIndex < len(filteredItems) {
 				selectedItem, ok := filteredItems[m.navigationFilteredIndex].(listItem)
 				if !ok {
@@ -365,12 +344,10 @@ func (m MenuModel) updateNavigationPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 
 				if selectedItem.isGroup {
-					// Enter group
 					if selectedItem.group != nil {
 						m.groupPath = append(m.groupPath, selectedItem.group)
 						m.list.SetItems(buildListItems(m.config, m.groupPath))
 						m.list.ResetSelected()
-						// Clear filter when entering a group
 						m.navigationFilterInput = ""
 						m.navigationFilteredIndex = 0
 						m.saveState()
@@ -391,14 +368,12 @@ func (m MenuModel) updateNavigationPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "/":
-		// Start filtering
 		m.navigationFilterActive = true
 		m.navigationFilterInput = ""
 		m.navigationFilteredIndex = 0
 		return m, nil
 
 	case "esc", "backspace", "h":
-		// Navigate up in hierarchy (only if no filter is active)
 		if len(m.groupPath) > 0 {
 			m.groupPath = m.groupPath[:len(m.groupPath)-1]
 			m.list.SetItems(buildListItems(m.config, m.groupPath))
@@ -409,22 +384,18 @@ func (m MenuModel) updateNavigationPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "enter", "l":
-		// Navigate into group or select workflow
 		selectedItem, ok := m.list.SelectedItem().(listItem)
 		if !ok {
 			return m, nil
 		}
 
 		if selectedItem.isGroup {
-			// Check if it's the "Go back" item
 			if selectedItem.group == nil && len(m.groupPath) > 0 {
-				// Go back to parent
 				m.groupPath = m.groupPath[:len(m.groupPath)-1]
 				m.list.SetItems(buildListItems(m.config, m.groupPath))
 				m.list.ResetFilter()
 				m.saveState()
 			} else {
-				// Enter group
 				m.groupPath = append(m.groupPath, selectedItem.group)
 				m.list.SetItems(buildListItems(m.config, m.groupPath))
 				m.list.ResetSelected()
@@ -441,18 +412,14 @@ func (m MenuModel) updateNavigationPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "p":
-		// Toggle pin
 		if len(m.groupPath) > 0 {
 			selectedItem, ok := m.list.SelectedItem().(listItem)
 			if ok && !selectedItem.isGroup {
 				currentGroup := m.groupPath[len(m.groupPath)-1]
 				currentGroup.TogglePin(selectedItem.workflowName)
-
 				if err := m.config.Save(m.configPath); err != nil {
 					m.err = fmt.Errorf("failed to save config: %w", err)
 				}
-
-				// Refresh both lists
 				m.list.SetItems(buildListItems(m.config, m.groupPath))
 				m.pinnedList.SetItems(buildPinnedListItems(m.config))
 				m.saveState()
@@ -461,12 +428,8 @@ func (m MenuModel) updateNavigationPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "w":
-		// Open workflow in browser
 		selectedItem, ok := m.list.SelectedItem().(listItem)
-		if !ok {
-			return m, nil
-		}
-		if selectedItem.isGroup {
+		if !ok || selectedItem.isGroup {
 			return m, nil
 		}
 		if err := m.gh.OpenWorkflowInBrowser(selectedItem.workflowName); err != nil {
@@ -475,18 +438,15 @@ func (m MenuModel) updateNavigationPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	default:
-		// Pass through to list for navigation (j/k, up/down, etc.)
 		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(msg)
 		return m, cmd
 	}
 }
 
-// updateDetailsPanel handles input when details panel is focused
 func (m MenuModel) updateDetailsPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "w":
-		// Open workflow in browser
 		if m.selectedWorkflow != "" {
 			if err := m.gh.OpenWorkflowInBrowser(m.selectedWorkflow); err != nil {
 				m.err = err
@@ -495,7 +455,6 @@ func (m MenuModel) updateDetailsPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "esc":
-		// Clear selection
 		m.selectedWorkflow = ""
 		m.workflowRuns = nil
 		m.activePanel = NavigationPanel
@@ -506,11 +465,9 @@ func (m MenuModel) updateDetailsPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateRunsPanel handles input when runs panel is focused
 func (m MenuModel) updateRunsPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "w":
-		// Open run in browser
 		runID := m.getSelectedRunID()
 		if runID > 0 {
 			if err := m.gh.OpenRunInBrowser(runID); err != nil {
@@ -520,20 +477,17 @@ func (m MenuModel) updateRunsPanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "esc":
-		// Close runs panel
 		m.showRunsPanel = false
 		m.activePanel = DetailsPanel
 		return m.handleWindowResize(tea.WindowSizeMsg{Width: m.width, Height: m.height}), nil
 
 	default:
-		// Pass navigation keys to table (j/k, arrows, etc.)
 		var cmd tea.Cmd
 		m.table, cmd = m.table.Update(msg)
 		return m, cmd
 	}
 }
 
-// updateActiveComponent passes messages to the active component
 func (m MenuModel) updateActiveComponent(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
@@ -551,7 +505,6 @@ func (m MenuModel) updateActiveComponent(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// getNextPanel returns the next panel in the cycle
 func (m MenuModel) getNextPanel() PanelType {
 	switch m.activePanel {
 	case SidebarPanel:
@@ -570,7 +523,6 @@ func (m MenuModel) getNextPanel() PanelType {
 	}
 }
 
-// getPreviousPanel returns the previous panel in the cycle
 func (m MenuModel) getPreviousPanel() PanelType {
 	switch m.activePanel {
 	case SidebarPanel:
@@ -589,11 +541,18 @@ func (m MenuModel) getPreviousPanel() PanelType {
 	}
 }
 
-// updateGlobalSearch handles input when global search is active
+func (m MenuModel) updateHelpModal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "?", "q":
+		m.helpModalActive = false
+		return m, nil
+	}
+	return m, nil
+}
+
 func (m MenuModel) updateGlobalSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
-		// Close global search
 		m.globalSearchActive = false
 		m.globalSearchInput = ""
 		m.globalSearchResults = nil
@@ -601,7 +560,6 @@ func (m MenuModel) updateGlobalSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "enter":
-		// Select the current result
 		if len(m.globalSearchResults) > 0 && m.globalSearchIndex < len(m.globalSearchResults) {
 			result := m.globalSearchResults[m.globalSearchIndex]
 			m.globalSearchActive = false
@@ -613,21 +571,18 @@ func (m MenuModel) updateGlobalSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "up", "ctrl+p":
-		// Move selection up
 		if m.globalSearchIndex > 0 {
 			m.globalSearchIndex--
 		}
 		return m, nil
 
 	case "down", "ctrl+n":
-		// Move selection down
 		if m.globalSearchIndex < len(m.globalSearchResults)-1 {
 			m.globalSearchIndex++
 		}
 		return m, nil
 
 	case "backspace":
-		// Remove last character
 		if len(m.globalSearchInput) > 0 {
 			m.globalSearchInput = m.globalSearchInput[:len(m.globalSearchInput)-1]
 			m.globalSearchResults = globalSearch(m.config, m.globalSearchInput)
@@ -636,7 +591,6 @@ func (m MenuModel) updateGlobalSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	default:
-		// Add character to search input (only printable chars)
 		key := msg.String()
 		if len(key) == 1 {
 			m.globalSearchInput += key
@@ -647,10 +601,8 @@ func (m MenuModel) updateGlobalSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-// navigateToSearchResult navigates to the selected search result
 func (m MenuModel) navigateToSearchResult(result SearchResult) (tea.Model, tea.Cmd) {
 	if result.Type == "group" {
-		// Navigate to the group (enter into it)
 		m.groupPath = resolveGroupPathFromNames(m.config, result.GroupPath)
 		if result.Group != nil {
 			m.groupPath = append(m.groupPath, result.Group)
@@ -662,12 +614,9 @@ func (m MenuModel) navigateToSearchResult(result SearchResult) (tea.Model, tea.C
 		return m, nil
 	}
 
-	// It's a workflow - navigate to its group and select it
 	m.groupPath = resolveGroupPathFromNames(m.config, result.GroupPath)
 	m.list.SetItems(buildListItems(m.config, m.groupPath))
 	m.list.ResetSelected()
-
-	// Select the workflow and show its details
 	m.selectedWorkflow = result.WorkflowName
 	m.selectedGroup = result.Group
 	m.loading = true
@@ -677,7 +626,6 @@ func (m MenuModel) navigateToSearchResult(result SearchResult) (tea.Model, tea.C
 	return m, m.fetchWorkflowRunsCmd
 }
 
-// resolveGroupPathFromNames converts a slice of group names to a slice of Group pointers
 func resolveGroupPathFromNames(cfg *config.Config, names []string) []*config.Group {
 	if len(names) == 0 {
 		return []*config.Group{}
@@ -697,7 +645,6 @@ func resolveGroupPathFromNames(cfg *config.Config, names []string) []*config.Gro
 			}
 		}
 		if !found {
-			// Path doesn't exist, return what we have
 			break
 		}
 	}
