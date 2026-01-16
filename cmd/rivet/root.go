@@ -188,14 +188,14 @@ func runViewWithConfig(cfg *config.Config, configPath string) error {
 		interval = cfg.GetRefreshInterval()
 	}
 
-	opts := tui.MenuOptions{
+	opts := tui.AppOptions{
 		StatePath:       statePath,
 		NoRestoreState:  noState,
 		RefreshInterval: interval,
 	}
 
-	model := tui.NewMenuModel(cfg, configPath, gh, opts)
-	if err := tui.RunMenu(model); err != nil {
+	app := tui.NewApp(cfg, configPath, gh, opts)
+	if err := tui.RunApp(app); err != nil {
 		return err
 	}
 
