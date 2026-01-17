@@ -203,8 +203,56 @@ func runViewWithConfig(cfg *config.Config, configPath string) error {
 }
 
 func runInit(cmd *cobra.Command, _ []string) error {
-	// Initialize paths first - we'll need this throughout
+	// Initialize paths
+	p, err := initializePaths()
+	if err != nil {
+		return err
+	}
+
+	// Determine config path settings
+	explicitConfigPath := cmd != nil && cmd.Flags().Changed("config")
+	savePathHint := determineSavePathHint(p, explicitConfigPath)
+
+	// Discover workflows (local or remote)
+	workflows, useRemoteWorkflows, err := discoverWorkflows()
+	if err != nil {
+		return err
+	}
+
+	if len(workflows) == 0 {
+		return handleNoWorkflows(p, repo, useRemoteWorkflows)
+	}
+
+	// Run configuration wizard
+	cfg, configType, err := runConfigWizard(workflows, savePathHint, useRemoteWorkflows)
+	if err != nil {
+		return err
+	}
+
+	// Determine where to save the config
+	targetPath, location, err := determineConfigSaveTarget(p, explicitConfigPath, configPath, configType)
+	if err != nil {
+		return err
+	}
+
+	// Validate we can write to the target path
+	if err := validateConfigOverwrite(targetPath); err != nil {
+		return err
+	}
+
+	// Save configuration to the appropriate location
+	if err := saveConfigToLocation(cfg, targetPath, location, p); err != nil {
+		return err
+	}
+
+	printSuccessSummary(targetPath, cfg)
+	return nil
+}
+
+// initializePaths creates a Paths instance based on the current git repository context.
+func initializePaths() (*paths.Paths, error) {
 	projectRoot, _ := git.GetGitRepositoryRoot()
+
 	var p *paths.Paths
 	var err error
 	if projectRoot != "" {
@@ -212,71 +260,93 @@ func runInit(cmd *cobra.Command, _ []string) error {
 	} else {
 		p, err = paths.New()
 	}
+
 	if err != nil {
-		return fmt.Errorf("failed to initialize paths: %w", err)
+		return nil, fmt.Errorf("failed to initialize paths: %w", err)
 	}
 
-	// Determine if user explicitly provided a config path via CLI
-	explicitConfigPath := cmd != nil && cmd.Flags().Changed("config")
+	return p, nil
+}
 
-	// Use current best guess for save path - the wizard may change this later.
+// determineSavePathHint returns the initial hint for where to save the config file.
+func determineSavePathHint(p *paths.Paths, explicitConfigPath bool) string {
 	savePathHint := p.UserConfigFile()
 	if explicitConfigPath && configPath != "" {
 		savePathHint = configPath
 	}
+	return savePathHint
+}
 
-	var workflows []string
-	var useRemoteWorkflows bool
-
+// discoverWorkflows finds workflow files either from a remote repository or locally.
+// Returns the list of workflows, a flag indicating if remote workflows were used, and any error.
+func discoverWorkflows() ([]string, bool, error) {
 	// If --repo flag is provided, fetch workflows from GitHub
 	if repo != "" {
-		if err := git.ValidateRepositoryFormat(repo); err != nil {
-			return err
-		}
-
-		timeout := time.Duration(timeoutSeconds) * time.Second
-		ghClient := github.NewClientWithTimeout("", timeout)
-		ctx := context.Background()
-
-		// Validate repository exists with spinner
-		_, err := wizard.RunWithSpinner(ctx, fmt.Sprintf("Validating repository %s", repo), func() (any, error) {
-			exists, err := ghClient.RepositoryExists(ctx, repo)
-			if err != nil {
-				return nil, err
-			}
-			if !exists {
-				return nil, fmt.Errorf("repository not found or not accessible")
-			}
-			return nil, nil
-		})
+		workflows, err := fetchRemoteWorkflows()
 		if err != nil {
-			return err
+			return nil, false, err
 		}
-
-		// Fetch workflows from GitHub with spinner
-		result, err := wizard.RunWithSpinner(ctx, fmt.Sprintf("Fetching workflows from %s", repo), func() (interface{}, error) {
-			return ghClient.GetWorkflows(ctx, repo)
-		})
-		if err != nil {
-			return fmt.Errorf("failed to fetch workflows: %w", err)
-		}
-
-		workflows = result.([]string)
-		useRemoteWorkflows = true
-	} else {
-		// Try to discover local workflows
-		workflowDir := ".github/workflows"
-		localWorkflows, err := wizard.DiscoverWorkflows(workflowDir)
-		if err != nil {
-			return handleNoLocalWorkflows()
-		}
-		workflows = localWorkflows
+		return workflows, true, nil
 	}
 
-	if len(workflows) == 0 {
-		return handleNoWorkflows(p, repo, useRemoteWorkflows)
+	// Try to discover local workflows
+	workflows, err := discoverLocalWorkflows()
+	if err != nil {
+		return nil, false, err
 	}
 
+	return workflows, false, nil
+}
+
+// fetchRemoteWorkflows retrieves workflow files from a GitHub repository.
+func fetchRemoteWorkflows() ([]string, error) {
+	if err := git.ValidateRepositoryFormat(repo); err != nil {
+		return nil, err
+	}
+
+	timeout := time.Duration(timeoutSeconds) * time.Second
+	ghClient := github.NewClientWithTimeout("", timeout)
+	ctx := context.Background()
+
+	// Validate repository exists with spinner
+	_, err := wizard.RunWithSpinner(ctx, fmt.Sprintf("Validating repository %s", repo), func() (any, error) {
+		exists, err := ghClient.RepositoryExists(ctx, repo)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, fmt.Errorf("repository not found or not accessible")
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Fetch workflows from GitHub with spinner
+	result, err := wizard.RunWithSpinner(ctx, fmt.Sprintf("Fetching workflows from %s", repo), func() (interface{}, error) {
+		return ghClient.GetWorkflows(ctx, repo)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch workflows: %w", err)
+	}
+
+	return result.([]string), nil
+}
+
+// discoverLocalWorkflows finds workflow files in the local .github/workflows directory.
+func discoverLocalWorkflows() ([]string, error) {
+	workflowDir := ".github/workflows"
+	workflows, err := wizard.DiscoverWorkflows(workflowDir)
+	if err != nil {
+		return nil, handleNoLocalWorkflows()
+	}
+	return workflows, nil
+}
+
+// runConfigWizard executes the interactive configuration wizard.
+// Returns the generated config, config type, and any error.
+func runConfigWizard(workflows []string, savePathHint string, useRemoteWorkflows bool) (*config.Config, string, error) {
 	w := wizard.New(workflows, savePathHint)
 
 	// Set repository if using remote workflows
@@ -286,22 +356,24 @@ func runInit(cmd *cobra.Command, _ []string) error {
 
 	cfg, err := w.Run()
 	if err != nil {
-		return fmt.Errorf("wizard failed: %w", err)
+		return nil, "", fmt.Errorf("wizard failed: %w", err)
 	}
 
-	targetPath, location, err := determineConfigSaveTarget(p, explicitConfigPath, configPath, w.GetConfigType())
-	if err != nil {
-		return err
-	}
+	return cfg, w.GetConfigType(), nil
+}
 
-	// Handle --reset flag for the chosen target
+// validateConfigOverwrite checks if we can write to the target path based on reset/force flags.
+func validateConfigOverwrite(targetPath string) error {
 	if reset {
 		if err := os.Remove(targetPath); err == nil {
 			fmt.Println(infoStyle.Render("Removed existing config: " + targetPath))
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("failed to remove existing config at %s: %w", targetPath, err)
 		}
-	} else if !force {
+		return nil
+	}
+
+	if !force {
 		if _, err := os.Stat(targetPath); err == nil {
 			return fmt.Errorf("configuration file %s already exists. Use --force to overwrite or --reset to start fresh", targetPath)
 		} else if !os.IsNotExist(err) {
@@ -309,7 +381,11 @@ func runInit(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	// Ensure directories exist and save to the desired location
+	return nil
+}
+
+// saveConfigToLocation saves the configuration file to the appropriate location.
+func saveConfigToLocation(cfg *config.Config, targetPath string, location configSaveLocation, p *paths.Paths) error {
 	switch location {
 	case saveLocationTeam:
 		if err := cfg.SaveToRepoDefault(p); err != nil {
@@ -330,8 +406,6 @@ func runInit(cmd *cobra.Command, _ []string) error {
 			return fmt.Errorf("failed to save configuration: %w", err)
 		}
 	}
-
-	printSuccessSummary(targetPath, cfg)
 	return nil
 }
 
