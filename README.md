@@ -11,8 +11,6 @@
   
   ---
   
-  <img src="static/demo.gif" alt="Demo" width="700">
-  
 </div>
 
 ---
