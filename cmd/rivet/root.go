@@ -72,7 +72,6 @@ func init() {
 	rootCmd.Flags().IntVar(&timeoutSeconds, "timeout", 30, "GitHub API timeout in seconds")
 	rootCmd.Flags().IntVar(&refreshInterval, "refresh-interval", 0, "Auto-refresh interval in seconds (0 = disabled, min 5)")
 
-	// Store original help functions before overriding
 	originalRootHelpFunc := rootCmd.HelpFunc()
 	originalInitHelpFunc := initCmd.HelpFunc()
 
@@ -118,7 +117,6 @@ func runView(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	// If a config path was explicitly provided via CLI flag, use it directly
 	if cmd.Flags().Changed("config") {
 		cfg, err := config.LoadMerged([]string{configPath})
 		if err != nil {
@@ -130,7 +128,6 @@ func runView(cmd *cobra.Command, _ []string) error {
 		return runViewWithConfig(cfg, configPath)
 	}
 
-	// Otherwise, use the proper precedence system
 	projectRoot, _ := git.GetGitRepositoryRoot()
 	var p *paths.Paths
 	var err error
@@ -143,7 +140,6 @@ func runView(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to initialize paths: %w", err)
 	}
 
-	// Load and merge all available configs
 	configPaths := p.GetConfigPaths()
 	if len(configPaths) > 0 {
 		cfg, err := config.LoadMerged(configPaths)
@@ -153,17 +149,14 @@ func runView(cmd *cobra.Command, _ []string) error {
 		if err := cfg.Validate(); err != nil {
 			return fmt.Errorf("invalid configuration: %w", err)
 		}
-		// Use the last loaded path as the primary config path for display/save purposes
 		primaryPath := configPaths[len(configPaths)-1]
 		return runViewWithConfig(cfg, primaryPath)
 	}
 
-	// No config found, trigger init flow
 	return handleMissingConfig()
 }
 
 func runViewWithConfig(cfg *config.Config, configPath string) error {
-	// Use --repo flag if provided, otherwise use config repository
 	if repo == "" {
 		repo = cfg.Repository
 		if repo != "" {
@@ -182,7 +175,6 @@ func runViewWithConfig(cfg *config.Config, configPath string) error {
 	timeout := time.Duration(timeoutSeconds) * time.Second
 	gh := github.NewClientWithTimeout(repo, timeout)
 
-	// Use CLI flag if provided, otherwise use config value
 	interval := refreshInterval
 	if interval == 0 && cfg.GetRefreshInterval() > 0 {
 		interval = cfg.GetRefreshInterval()
@@ -203,8 +195,48 @@ func runViewWithConfig(cfg *config.Config, configPath string) error {
 }
 
 func runInit(cmd *cobra.Command, _ []string) error {
-	// Initialize paths first - we'll need this throughout
+	p, err := initializePaths()
+	if err != nil {
+		return err
+	}
+
+	explicitConfigPath := cmd != nil && cmd.Flags().Changed("config")
+	savePathHint := determineSavePathHint(p, explicitConfigPath)
+
+	workflows, useRemoteWorkflows, err := discoverWorkflows()
+	if err != nil {
+		return err
+	}
+
+	if len(workflows) == 0 {
+		return handleNoWorkflows(p, repo, useRemoteWorkflows)
+	}
+
+	cfg, configType, err := runConfigWizard(workflows, savePathHint, useRemoteWorkflows)
+	if err != nil {
+		return err
+	}
+
+	targetPath, location, err := determineConfigSaveTarget(p, explicitConfigPath, configPath, configType)
+	if err != nil {
+		return err
+	}
+
+	if err := validateConfigOverwrite(targetPath); err != nil {
+		return err
+	}
+
+	if err := saveConfigToLocation(cfg, targetPath, location, p); err != nil {
+		return err
+	}
+
+	printSuccessSummary(targetPath, cfg)
+	return nil
+}
+
+func initializePaths() (*paths.Paths, error) {
 	projectRoot, _ := git.GetGitRepositoryRoot()
+
 	var p *paths.Paths
 	var err error
 	if projectRoot != "" {
@@ -212,71 +244,82 @@ func runInit(cmd *cobra.Command, _ []string) error {
 	} else {
 		p, err = paths.New()
 	}
+
 	if err != nil {
-		return fmt.Errorf("failed to initialize paths: %w", err)
+		return nil, fmt.Errorf("failed to initialize paths: %w", err)
 	}
 
-	// Determine if user explicitly provided a config path via CLI
-	explicitConfigPath := cmd != nil && cmd.Flags().Changed("config")
+	return p, nil
+}
 
-	// Use current best guess for save path - the wizard may change this later.
+func determineSavePathHint(p *paths.Paths, explicitConfigPath bool) string {
 	savePathHint := p.UserConfigFile()
 	if explicitConfigPath && configPath != "" {
 		savePathHint = configPath
 	}
+	return savePathHint
+}
 
-	var workflows []string
-	var useRemoteWorkflows bool
-
-	// If --repo flag is provided, fetch workflows from GitHub
+func discoverWorkflows() ([]string, bool, error) {
 	if repo != "" {
-		if err := git.ValidateRepositoryFormat(repo); err != nil {
-			return err
-		}
-
-		timeout := time.Duration(timeoutSeconds) * time.Second
-		ghClient := github.NewClientWithTimeout("", timeout)
-		ctx := context.Background()
-
-		// Validate repository exists with spinner
-		_, err := wizard.RunWithSpinner(ctx, fmt.Sprintf("Validating repository %s", repo), func() (any, error) {
-			exists, err := ghClient.RepositoryExists(ctx, repo)
-			if err != nil {
-				return nil, err
-			}
-			if !exists {
-				return nil, fmt.Errorf("repository not found or not accessible")
-			}
-			return nil, nil
-		})
+		workflows, err := fetchRemoteWorkflows()
 		if err != nil {
-			return err
+			return nil, false, err
 		}
-
-		// Fetch workflows from GitHub with spinner
-		result, err := wizard.RunWithSpinner(ctx, fmt.Sprintf("Fetching workflows from %s", repo), func() (interface{}, error) {
-			return ghClient.GetWorkflows(ctx, repo)
-		})
-		if err != nil {
-			return fmt.Errorf("failed to fetch workflows: %w", err)
-		}
-
-		workflows = result.([]string)
-		useRemoteWorkflows = true
-	} else {
-		// Try to discover local workflows
-		workflowDir := ".github/workflows"
-		localWorkflows, err := wizard.DiscoverWorkflows(workflowDir)
-		if err != nil {
-			return handleNoLocalWorkflows()
-		}
-		workflows = localWorkflows
+		return workflows, true, nil
 	}
 
-	if len(workflows) == 0 {
-		return handleNoWorkflows(p, repo, useRemoteWorkflows)
+	workflows, err := discoverLocalWorkflows()
+	if err != nil {
+		return nil, false, err
 	}
 
+	return workflows, false, nil
+}
+
+func fetchRemoteWorkflows() ([]string, error) {
+	if err := git.ValidateRepositoryFormat(repo); err != nil {
+		return nil, err
+	}
+
+	timeout := time.Duration(timeoutSeconds) * time.Second
+	ghClient := github.NewClientWithTimeout("", timeout)
+	ctx := context.Background()
+
+	_, err := wizard.RunWithSpinner(ctx, fmt.Sprintf("Validating repository %s", repo), func() (any, error) {
+		exists, err := ghClient.RepositoryExists(ctx, repo)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, fmt.Errorf("repository not found or not accessible")
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := wizard.RunWithSpinner(ctx, fmt.Sprintf("Fetching workflows from %s", repo), func() (interface{}, error) {
+		return ghClient.GetWorkflows(ctx, repo)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch workflows: %w", err)
+	}
+
+	return result.([]string), nil
+}
+
+func discoverLocalWorkflows() ([]string, error) {
+	workflowDir := ".github/workflows"
+	workflows, err := wizard.DiscoverWorkflows(workflowDir)
+	if err != nil {
+		return nil, handleNoLocalWorkflows()
+	}
+	return workflows, nil
+}
+
+func runConfigWizard(workflows []string, savePathHint string, useRemoteWorkflows bool) (*config.Config, string, error) {
 	w := wizard.New(workflows, savePathHint)
 
 	// Set repository if using remote workflows
@@ -286,22 +329,23 @@ func runInit(cmd *cobra.Command, _ []string) error {
 
 	cfg, err := w.Run()
 	if err != nil {
-		return fmt.Errorf("wizard failed: %w", err)
+		return nil, "", fmt.Errorf("wizard failed: %w", err)
 	}
 
-	targetPath, location, err := determineConfigSaveTarget(p, explicitConfigPath, configPath, w.GetConfigType())
-	if err != nil {
-		return err
-	}
+	return cfg, w.GetConfigType(), nil
+}
 
-	// Handle --reset flag for the chosen target
+func validateConfigOverwrite(targetPath string) error {
 	if reset {
 		if err := os.Remove(targetPath); err == nil {
 			fmt.Println(infoStyle.Render("Removed existing config: " + targetPath))
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("failed to remove existing config at %s: %w", targetPath, err)
 		}
-	} else if !force {
+		return nil
+	}
+
+	if !force {
 		if _, err := os.Stat(targetPath); err == nil {
 			return fmt.Errorf("configuration file %s already exists. Use --force to overwrite or --reset to start fresh", targetPath)
 		} else if !os.IsNotExist(err) {
@@ -309,7 +353,10 @@ func runInit(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	// Ensure directories exist and save to the desired location
+	return nil
+}
+
+func saveConfigToLocation(cfg *config.Config, targetPath string, location configSaveLocation, p *paths.Paths) error {
 	switch location {
 	case saveLocationTeam:
 		if err := cfg.SaveToRepoDefault(p); err != nil {
@@ -330,13 +377,10 @@ func runInit(cmd *cobra.Command, _ []string) error {
 			return fmt.Errorf("failed to save configuration: %w", err)
 		}
 	}
-
-	printSuccessSummary(targetPath, cfg)
 	return nil
 }
 
 func runUpdateRepo(cmd *cobra.Command, args []string) error {
-	// Auto-detect config path if not explicitly provided
 	var actualConfigPath string
 	if cmd.Flags().Changed("config") {
 		actualConfigPath = configPath
@@ -367,11 +411,9 @@ func runUpdateRepo(cmd *cobra.Command, args []string) error {
 
 	var newRepo string
 
-	// If repository is provided as argument, use it
 	if len(args) > 0 {
 		newRepo = strings.TrimSpace(args[0])
 	} else {
-		// Try to detect from .git/config
 		detectedRepo, err := git.DetectRepository()
 		if err != nil || detectedRepo == "" {
 			return fmt.Errorf("could not detect repository from .git/config and no repository provided\nUsage: rivet update-repo owner/repo")
@@ -380,7 +422,6 @@ func runUpdateRepo(cmd *cobra.Command, args []string) error {
 		fmt.Println(infoStyle.Render("Detected repository: " + newRepo))
 	}
 
-	// Validate format
 	if err := git.ValidateRepositoryFormat(newRepo); err != nil {
 		return err
 	}
@@ -393,10 +434,7 @@ func runUpdateRepo(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to validate repository %s: %v", newRepo, err)
 	}
 
-	// Update config
 	cfg.Repository = newRepo
-
-	// Save updated config
 	if err := cfg.Save(actualConfigPath); err != nil {
 		return fmt.Errorf("failed to save configuration: %w", err)
 	}
