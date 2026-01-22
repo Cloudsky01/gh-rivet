@@ -16,6 +16,7 @@ import (
 	"github.com/Cloudsky01/gh-rivet/internal/git"
 	"github.com/Cloudsky01/gh-rivet/internal/github"
 	"github.com/Cloudsky01/gh-rivet/internal/paths"
+	"github.com/Cloudsky01/gh-rivet/internal/state"
 	"github.com/Cloudsky01/gh-rivet/internal/tui"
 	"github.com/Cloudsky01/gh-rivet/internal/wizard"
 )
@@ -156,20 +157,64 @@ func runView(cmd *cobra.Command, _ []string) error {
 	return handleMissingConfig()
 }
 
-func runViewWithConfig(cfg *config.Config, configPath string) error {
-	if repo == "" {
-		repo = cfg.Repository
-		if repo != "" {
-			fmt.Println(infoStyle.Render("Using repository from config: " + repo))
+func determineActiveRepository(cfg *config.Config, p *paths.Paths) (repo string, isGitRepo bool, err error) {
+	if detectedRepo, gitErr := git.DetectRepository(); gitErr == nil && detectedRepo != "" {
+		return detectedRepo, true, nil
+	}
+
+	allRepos := cfg.GetAllRepositories()
+	if len(allRepos) > 0 {
+		globalState, _ := state.LoadGlobal(p)
+		if globalState != nil && globalState.ActiveRepository != "" {
+			if cfg.HasRepository(globalState.ActiveRepository) {
+				return globalState.ActiveRepository, false, nil
+			}
 		}
+		return allRepos[0].Repository, false, nil
+	}
+
+	if cfg.Repository != "" {
+		return cfg.Repository, false, nil
+	}
+
+	return "", false, fmt.Errorf("no repository configured")
+}
+
+func runViewWithConfig(cfg *config.Config, configPath string) error {
+	projectRoot, _ := git.GetGitRepositoryRoot()
+	var p *paths.Paths
+	var err error
+	if projectRoot != "" {
+		p, err = paths.NewWithProject(projectRoot)
+	} else {
+		p, err = paths.New()
+	}
+	if err != nil {
+		return fmt.Errorf("failed to initialize paths: %w", err)
 	}
 
 	if repo == "" {
-		return fmt.Errorf("repository must be specified with --repo flag (e.g., --repo owner/repo)")
+		detectedRepo, isGit, err := determineActiveRepository(cfg, p)
+		if err != nil {
+			return err
+		}
+		repo = detectedRepo
+		if isGit {
+			fmt.Println(infoStyle.Render("Using local git repository: " + repo))
+		} else {
+			fmt.Println(infoStyle.Render("Using repository: " + repo))
+		}
 	}
 
 	if !git.RepositoryFormatRegex.MatchString(repo) {
 		return fmt.Errorf("invalid repository format '%s'. Expected format: OWNER/REPO (e.g., github/cli)", repo)
+	}
+
+	_, isGitRepo, _ := determineActiveRepository(cfg, p)
+
+	globalState, err := state.LoadGlobal(p)
+	if err != nil {
+		globalState = &state.GlobalState{}
 	}
 
 	timeout := time.Duration(timeoutSeconds) * time.Second
@@ -184,6 +229,9 @@ func runViewWithConfig(cfg *config.Config, configPath string) error {
 		StatePath:       statePath,
 		NoRestoreState:  noState,
 		RefreshInterval: interval,
+		InsideGitRepo:   isGitRepo,
+		GlobalState:     globalState,
+		Paths:           p,
 	}
 
 	app := tui.NewApp(cfg, configPath, gh, opts)
@@ -215,6 +263,19 @@ func runInit(cmd *cobra.Command, _ []string) error {
 	cfg, configType, err := runConfigWizard(workflows, savePathHint, useRemoteWorkflows)
 	if err != nil {
 		return err
+	}
+
+	// Ensure the configured repository is correctly set in new fields
+	// The wizard might set cfg.Repository (legacy), so we migrate it here for new configs
+	if cfg.Repository != "" {
+		if cfg.ActiveRepository == "" {
+			cfg.ActiveRepository = cfg.Repository
+		}
+		if len(cfg.Repositories) == 0 {
+			cfg.Repositories = []string{cfg.Repository}
+		}
+		// Clear legacy field for new configs
+		cfg.Repository = ""
 	}
 
 	targetPath, location, err := determineConfigSaveTarget(p, explicitConfigPath, configPath, configType)
@@ -434,7 +495,21 @@ func runUpdateRepo(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to validate repository %s: %v", newRepo, err)
 	}
 
-	cfg.Repository = newRepo
+	// Update active repository
+	cfg.ActiveRepository = newRepo
+
+	// Add to repositories list if not present
+	found := false
+	for _, r := range cfg.Repositories {
+		if r == newRepo {
+			found = true
+			break
+		}
+	}
+	if !found {
+		cfg.Repositories = append(cfg.Repositories, newRepo)
+	}
+
 	if err := cfg.Save(actualConfigPath); err != nil {
 		return fmt.Errorf("failed to save configuration: %w", err)
 	}

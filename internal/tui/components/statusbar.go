@@ -11,14 +11,15 @@ import (
 
 // StatusBar displays the current location and status
 type StatusBar struct {
-	width           int
-	repository      string
-	groupPath       []string
-	workflowName    string
-	autoRefresh     bool
-	refreshInterval int
-	loading         bool
-	theme           *theme.Theme
+	width            int
+	repository       string
+	repositorySource string
+	groupPath        []string
+	workflowName     string
+	autoRefresh      bool
+	refreshInterval  int
+	loading          bool
+	theme            *theme.Theme
 }
 
 // NewStatusBar creates a new status bar
@@ -33,9 +34,10 @@ func (s *StatusBar) SetSize(width int) {
 	s.width = width
 }
 
-// SetRepository sets the current repository
-func (s *StatusBar) SetRepository(repo string) {
+// SetRepository sets the current repository and its source
+func (s *StatusBar) SetRepository(repo, source string) {
 	s.repository = repo
+	s.repositorySource = source
 }
 
 // SetGroupPath sets the current group path
@@ -64,7 +66,13 @@ func (s *StatusBar) View() string {
 	// Build breadcrumb
 	parts := []string{}
 	if s.repository != "" {
-		parts = append(parts, "📦 "+s.repository)
+		repoLabel := "📦 " + s.repository
+		if s.repositorySource == "git" {
+			repoLabel += " (git)"
+		} else if s.repositorySource == "selected" {
+			repoLabel += " (selected)"
+		}
+		parts = append(parts, repoLabel)
 	}
 	for _, group := range s.groupPath {
 		parts = append(parts, group)

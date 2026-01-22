@@ -17,6 +17,7 @@ func (a *App) setupCommands() {
 		{Name: "open", Aliases: []string{"o", "web", "browser"}, Description: "Open in browser"},
 		{Name: "sidebar", Aliases: []string{"1"}, Description: "Toggle sidebar"},
 		{Name: "back", Aliases: []string{"b"}, Description: "Go back"},
+		{Name: "switch-repo", Aliases: []string{"repo", "sr", "repository"}, Description: "Switch repository"},
 	}
 	a.cmdPalette.SetCommands(cmds)
 }
@@ -71,6 +72,18 @@ func (a *App) executeCommand(cmd *components.Command) (tea.Model, tea.Cmd) {
 			a.refreshNavList()
 			a.saveState()
 		}
+
+	case "switch-repo":
+		if a.isInsideGitRepo {
+			return a, a.toaster.Info("Inside git repo - cannot switch")
+		}
+		if !a.config.IsMultiRepo() {
+			return a, a.toaster.Info("Only one repository configured")
+		}
+		repos := a.config.GetAllRepositories()
+		a.repoSwitcher.SetRepositories(repos, a.activeRepository)
+		a.repoSwitcher.Open()
+		return a, nil
 	}
 
 	if len(cmds) > 0 {
