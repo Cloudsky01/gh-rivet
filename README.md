@@ -23,7 +23,6 @@ Wraps the [GitHub CLI (`gh`)](https://cli.github.com/) — uses your existing au
 
 ## Requirements
 
-* Go 1.21+
 * [GitHub CLI (`gh`)](https://cli.github.com/) installed and authenticated.
 
 ## Installation
