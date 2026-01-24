@@ -60,7 +60,7 @@ func TestLoad(t *testing.T) {
 
 func TestMerge(t *testing.T) {
 	baseConfig := &Config{
-		Repository: "base/repo",
+		ActiveRepository: "base/repo",
 		Preferences: &Preferences{
 			Theme:           "light",
 			RefreshInterval: 30,
@@ -72,7 +72,7 @@ func TestMerge(t *testing.T) {
 	}
 
 	overrideConfig := &Config{
-		Repository: "override/repo",
+		ActiveRepository: "override/repo",
 		Preferences: &Preferences{
 			Theme: "dark",
 			// RefreshInterval missing, should keep base
@@ -85,8 +85,8 @@ func TestMerge(t *testing.T) {
 
 	baseConfig.Merge(overrideConfig)
 
-	if baseConfig.Repository != "override/repo" {
-		t.Errorf("Expected repository 'override/repo', got '%s'", baseConfig.Repository)
+	if baseConfig.ActiveRepository != "override/repo" {
+		t.Errorf("Expected active repository 'override/repo', got '%s'", baseConfig.ActiveRepository)
 	}
 
 	if baseConfig.Preferences.Theme != "dark" {
@@ -172,7 +172,7 @@ func TestValidate(t *testing.T) {
 		expectError bool
 	}{
 		{
-			name: "Valid config",
+			name: "Valid config (Legacy Repository)",
 			config: &Config{
 				Repository: "owner/repo",
 				Groups: []Group{
@@ -185,17 +185,29 @@ func TestValidate(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name: "Valid config (ActiveRepository)",
+			config: &Config{
+				ActiveRepository: "owner/repo",
+				Groups: []Group{
+					{
+						ID:   "test",
+						Name: "Test Group",
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
 			name: "Empty config",
 			config: &Config{
-				Repository: "owner/repo",
-				Groups:     []Group{},
+				Groups: []Group{},
 			},
 			expectError: true,
 		},
 		{
 			name: "Missing group ID",
 			config: &Config{
-				Repository: "owner/repo",
+				ActiveRepository: "owner/repo",
 				Groups: []Group{
 					{
 						Name: "Test Group",
@@ -207,7 +219,7 @@ func TestValidate(t *testing.T) {
 		{
 			name: "Missing group name",
 			config: &Config{
-				Repository: "owner/repo",
+				ActiveRepository: "owner/repo",
 				Groups: []Group{
 					{
 						ID: "test",

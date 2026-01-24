@@ -63,7 +63,13 @@ func (a *App) wrapPanel(content string, active bool) string {
 }
 
 func (a *App) updateStatusBar() {
-	a.statusBar.SetRepository(a.config.Repository)
+	repoSource := ""
+	if a.isInsideGitRepo {
+		repoSource = "git"
+	} else if a.config.IsMultiRepo() {
+		repoSource = "selected"
+	}
+	a.statusBar.SetRepository(a.activeRepository, repoSource)
 
 	groupNames := make([]string, len(a.groupPath))
 	for i, g := range a.groupPath {

@@ -19,10 +19,18 @@ type Preferences struct {
 	CustomSettings  map[string]string `yaml:"customSettings,omitempty"`  // Extensible custom settings
 }
 
+type Repository struct {
+	Repository string `yaml:"repository"`
+	Alias      string `yaml:"alias,omitempty"`
+}
+
 type Config struct {
-	Repository  string       `yaml:"repository"`
-	Preferences *Preferences `yaml:"preferences,omitempty"` // User preferences (optional)
-	Groups      []Group      `yaml:"groups,omitempty"`
+	Repository         string       `yaml:"repository,omitempty"`       // Deprecated: use ActiveRepository or Repositories
+	ActiveRepository   string       `yaml:"activeRepository,omitempty"` // The currently selected repository
+	Repositories       []string     `yaml:"repositories,omitempty"`     // Deprecated: use RepositoryDefs
+	RepositoryDefs     []Repository `yaml:"repositoryDefs,omitempty"`   // List of repositories with aliases
+	Preferences        *Preferences `yaml:"preferences,omitempty"`      // User preferences (optional)
+	Groups             []Group      `yaml:"groups,omitempty"`
 
 	// Internal fields (not serialized)
 	configPath string `yaml:"-"` // Path to the last loaded config file
@@ -47,6 +55,48 @@ func (c *Config) SetRefreshInterval(interval int) {
 // GetConfigPath returns the path to this config file
 func (c *Config) GetConfigPath() string {
 	return c.configPath
+}
+
+func (c *Config) HasRepository(repo string) bool {
+	if len(c.RepositoryDefs) > 0 {
+		for _, r := range c.RepositoryDefs {
+			if r.Repository == repo {
+				return true
+			}
+		}
+		return false
+	}
+	return slices.Contains(c.Repositories, repo)
+}
+
+func (c *Config) IsMultiRepo() bool {
+	if len(c.RepositoryDefs) > 0 {
+		return len(c.RepositoryDefs) > 1
+	}
+	return len(c.Repositories) > 1
+}
+
+func (c *Config) GetRepositoryAlias(repo string) string {
+	for _, r := range c.RepositoryDefs {
+		if r.Repository == repo {
+			if r.Alias != "" {
+				return r.Alias
+			}
+			return repo
+		}
+	}
+	return repo
+}
+
+func (c *Config) GetAllRepositories() []Repository {
+	if len(c.RepositoryDefs) > 0 {
+		return c.RepositoryDefs
+	}
+	repos := make([]Repository, len(c.Repositories))
+	for i, repo := range c.Repositories {
+		repos[i] = Repository{Repository: repo}
+	}
+	return repos
 }
 
 type Workflow struct {
@@ -114,6 +164,18 @@ func LoadFromPath(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
 
+	// Migration: Convert legacy Repository field
+	if config.Repository != "" {
+		if config.ActiveRepository == "" {
+			config.ActiveRepository = config.Repository
+		}
+		if len(config.Repositories) == 0 {
+			config.Repositories = []string{config.Repository}
+		}
+		// Clear legacy field to prevent re-saving it
+		config.Repository = ""
+	}
+
 	config.configPath = path
 
 	return &config, nil
@@ -122,8 +184,34 @@ func LoadFromPath(path string) (*Config, error) {
 // Merge merges another config into this one.
 // Fields from 'other' take precedence over this config.
 func (c *Config) Merge(other *Config) {
-	if other.Repository != "" {
-		c.Repository = other.Repository
+	if other.ActiveRepository != "" {
+		c.ActiveRepository = other.ActiveRepository
+	}
+
+	// Merge RepositoryDefs (deduplicate)
+	for _, repo := range other.RepositoryDefs {
+		found := false
+		for _, existing := range c.RepositoryDefs {
+			if existing.Repository == repo.Repository {
+				found = true
+				break
+			}
+		}
+		if !found {
+			c.RepositoryDefs = append(c.RepositoryDefs, repo)
+		}
+	}
+
+	// Merge Repositories (deduplicate)
+	for _, repo := range other.Repositories {
+		if !slices.Contains(c.Repositories, repo) {
+			c.Repositories = append(c.Repositories, repo)
+		}
+	}
+
+	// Legacy fallback for Merge
+	if other.Repository != "" && c.ActiveRepository == "" {
+		c.ActiveRepository = other.Repository
 	}
 
 	// Merge Preferences
@@ -199,7 +287,8 @@ func (c *Config) SaveWithHeader(path string, includeHeader bool) error {
 # Learn more: https://github.com/Cloudsky01/gh-rivet
 #
 # Configuration structure:
-# - repository: GitHub repository in owner/repo format
+# - activeRepository: The currently active repository (owner/repo)
+# - repositories: List of available repositories
 # - preferences: User-specific settings (optional)
 #   - refreshInterval: Auto-refresh interval in seconds (0 = disabled)
 #   - theme: Color theme preference
@@ -235,7 +324,7 @@ func (c *Config) SaveWithHeader(path string, includeHeader bool) error {
 }
 
 func (c *Config) Validate() error {
-	if c.Repository == "" {
+	if c.ActiveRepository == "" && c.Repository == "" && len(c.Repositories) == 0 && len(c.RepositoryDefs) == 0 {
 		return fmt.Errorf("configuration must specify a repository (owner/repo)")
 	}
 

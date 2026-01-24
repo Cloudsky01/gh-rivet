@@ -7,6 +7,7 @@ import (
 
 	"github.com/Cloudsky01/gh-rivet/internal/config"
 	"github.com/Cloudsky01/gh-rivet/internal/github"
+	"github.com/Cloudsky01/gh-rivet/internal/paths"
 	"github.com/Cloudsky01/gh-rivet/internal/state"
 	"github.com/Cloudsky01/gh-rivet/internal/tui/components"
 	"github.com/Cloudsky01/gh-rivet/internal/tui/theme"
@@ -40,20 +41,22 @@ type App struct {
 	config     *config.Config
 	configPath string
 	statePath  string
+	paths      *paths.Paths
 	gh         *github.Client
 
 	theme *theme.Theme
 
-	sidebar     components.Sidebar
-	navList     components.List
-	runsTable   *components.RunsTable
-	search      components.Search
-	cmdPalette  components.CmdPalette
-	helpOverlay components.HelpOverlay
-	toaster     components.Toaster
-	spinner     components.Spinner
-	statusBar   components.StatusBar
-	helpBar     components.HelpBar
+	sidebar      components.Sidebar
+	navList      components.List
+	runsTable    *components.RunsTable
+	search       components.Search
+	cmdPalette   components.CmdPalette
+	repoSwitcher components.RepoSwitcher
+	helpOverlay  components.HelpOverlay
+	toaster      components.Toaster
+	spinner      components.Spinner
+	statusBar    components.StatusBar
+	helpBar      components.HelpBar
 
 	groupPath        []*config.Group
 	selectedWorkflow string
@@ -72,6 +75,10 @@ type App struct {
 	refreshInterval    int
 	refreshTicker      *time.Ticker
 	autoRefreshEnabled bool
+
+	isInsideGitRepo  bool
+	activeRepository string
+	globalState      *state.GlobalState
 }
 
 type AppOptions struct {
@@ -79,6 +86,9 @@ type AppOptions struct {
 	StatePath       string
 	NoRestoreState  bool
 	RefreshInterval int
+	InsideGitRepo   bool
+	GlobalState     *state.GlobalState
+	Paths           *paths.Paths
 }
 
 // MenuOptions is deprecated, use AppOptions instead
@@ -97,10 +107,16 @@ func NewApp(cfg *config.Config, configPath string, gh *github.Client, opts AppOp
 		statePath = state.DefaultStatePath(configPath)
 	}
 
+	globalState := opts.GlobalState
+	if globalState == nil {
+		globalState = &state.GlobalState{}
+	}
+
 	app := &App{
 		config:             cfg,
 		configPath:         configPath,
 		statePath:          statePath,
+		paths:              opts.Paths,
 		gh:                 gh,
 		theme:              t,
 		sidebar:            components.NewSidebar(t),
@@ -108,6 +124,7 @@ func NewApp(cfg *config.Config, configPath string, gh *github.Client, opts AppOp
 		runsTable:          components.NewRunsTablePtr(t),
 		search:             components.NewSearch(t),
 		cmdPalette:         components.NewCmdPalette(t),
+		repoSwitcher:       components.NewRepoSwitcher(t),
 		helpOverlay:        components.NewHelpOverlay(t),
 		toaster:            components.NewToaster(t),
 		spinner:            components.NewSpinner(t),
@@ -119,6 +136,9 @@ func NewApp(cfg *config.Config, configPath string, gh *github.Client, opts AppOp
 		showSidebar:        true,
 		refreshInterval:    opts.RefreshInterval,
 		autoRefreshEnabled: opts.RefreshInterval > 0,
+		isInsideGitRepo:    opts.InsideGitRepo,
+		activeRepository:   gh.GetRepository(),
+		globalState:        globalState,
 	}
 
 	app.search.SetSearchFunc(func(query string) []components.SearchResult {
@@ -205,6 +225,10 @@ func (a *App) View() string {
 		return a.helpOverlay.View()
 	}
 
+	if a.repoSwitcher.IsActive() {
+		return a.repoSwitcher.View()
+	}
+
 	if a.cmdPalette.IsActive() {
 		return a.cmdPalette.View()
 	}
@@ -234,6 +258,7 @@ func (a *App) handleResize(msg tea.WindowSizeMsg) (*App, tea.Cmd) {
 	a.runsTable.SetSize(mainWidth-2, panelHeight)
 	a.search.SetSize(a.width, a.height)
 	a.cmdPalette.SetSize(a.width, a.height)
+	a.repoSwitcher.SetSize(a.width, a.height)
 	a.helpOverlay.SetSize(a.width, a.height)
 	a.toaster.SetWidth(a.width)
 	a.statusBar.SetSize(a.width)
@@ -279,6 +304,33 @@ func (a *App) selectWorkflow(name string, group *config.Group) (*App, tea.Cmd) {
 	a.updateStatusBar()
 	a.saveState()
 	return a, tea.Batch(a.spinner.Start("Loading runs..."), a.fetchWorkflowRunsCmd)
+}
+
+func (a *App) switchRepository(repo string) (*App, tea.Cmd) {
+	a.globalState.ActiveRepository = repo
+	if err := a.globalState.Save(a.paths); err != nil {
+		return a, a.toaster.Error("Failed to save repository selection")
+	}
+
+	a.activeRepository = repo
+	a.gh = github.NewClientWithTimeout(repo, a.gh.GetTimeout())
+
+	a.groupPath = []*config.Group{}
+	a.selectedWorkflow = ""
+	a.selectedGroup = nil
+	a.viewMode = ViewGroups
+
+	a.refreshNavList()
+	a.refreshPinnedList()
+
+	repoSource := "selected"
+	if a.isInsideGitRepo {
+		repoSource = "git"
+	}
+	a.statusBar.SetRepository(repo, repoSource)
+
+	alias := a.config.GetRepositoryAlias(repo)
+	return a, a.toaster.Success("Switched to " + alias)
 }
 
 func RunApp(app *App) error {

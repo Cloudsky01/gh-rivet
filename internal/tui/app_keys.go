@@ -14,6 +14,14 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
+	if a.repoSwitcher.IsActive() {
+		selectedRepo, cmd := a.repoSwitcher.Update(msg)
+		if selectedRepo != nil {
+			return a.switchRepository(selectedRepo.Repository)
+		}
+		return a, cmd
+	}
+
 	if a.cmdPalette.IsActive() {
 		cmd, teaCmd := a.cmdPalette.Update(msg)
 		if cmd != nil {

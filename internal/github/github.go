@@ -35,6 +35,14 @@ func NewClientWithTimeout(repo string, timeout time.Duration) *Client {
 	}
 }
 
+func (c *Client) GetRepository() string {
+	return c.repo
+}
+
+func (c *Client) GetTimeout() time.Duration {
+	return c.timeout
+}
+
 func (c *Client) GetLatestRun() (*models.GHRun, error) {
 	runs, err := c.GetRecentRuns(1)
 	if err != nil {
