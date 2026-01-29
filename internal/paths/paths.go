@@ -140,6 +140,11 @@ func (p *Paths) UserStateFile(repoOwner, repoName string) string {
 	return filepath.Join(p.UserStateDir, filename)
 }
 
+// GlobalStateFile returns the path to the global state file
+func (p *Paths) GlobalStateFile() string {
+	return filepath.Join(p.UserStateDir, "global.state.yaml")
+}
+
 // dirSpec defines a directory with its criticality and purpose
 type dirSpec struct {
 	path     *string // pointer to the path field in Paths struct
