@@ -194,12 +194,13 @@ func runViewWithConfig(cfg *config.Config, configPath string) error {
 	}
 
 	if repo == "" {
-		detectedRepo, isGit, err := determineActiveRepository(cfg, p)
+
+		detectedRepo, isGitRepo, err := determineActiveRepository(cfg, p)
 		if err != nil {
 			return err
 		}
 		repo = detectedRepo
-		if isGit {
+		if isGitRepo {
 			fmt.Println(infoStyle.Render("Using local git repository: " + repo))
 		} else {
 			fmt.Println(infoStyle.Render("Using repository: " + repo))
@@ -210,7 +211,6 @@ func runViewWithConfig(cfg *config.Config, configPath string) error {
 		return fmt.Errorf("invalid repository format '%s'. Expected format: OWNER/REPO (e.g., github/cli)", repo)
 	}
 
-	_, isGitRepo, _ := determineActiveRepository(cfg, p)
 
 	globalState, err := state.LoadGlobal(p)
 	if err != nil {
