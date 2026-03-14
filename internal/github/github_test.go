@@ -45,6 +45,13 @@ func TestParseWorkflowPaths(t *testing.T) {
 `,
 			expected: []string{"build.yml", "test.yml"},
 		},
+		{
+			name: "prefix only line (no filename)",
+			input: `.github/workflows/
+.github/workflows/build.yml
+`,
+			expected: []string{"build.yml"},
+		},
 	}
 
 	for _, tt := range tests {

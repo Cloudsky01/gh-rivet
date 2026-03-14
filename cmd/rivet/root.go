@@ -180,6 +180,10 @@ func runViewWithConfig(cfg *config.Config, configPath string) error {
 		interval = cfg.GetRefreshInterval()
 	}
 
+	if interval > 0 && interval < 5 {
+		return fmt.Errorf("--refresh-interval %d is too low: must be at least 5 seconds (0 to disable)", interval)
+	}
+
 	opts := tui.AppOptions{
 		StatePath:       statePath,
 		NoRestoreState:  noState,

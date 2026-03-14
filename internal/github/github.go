@@ -288,7 +288,10 @@ func parseWorkflowPaths(output string) []string {
 			continue
 		}
 		if strings.HasPrefix(line, prefix) {
-			workflows = append(workflows, line[len(prefix):])
+			filename := line[len(prefix):]
+			if filename != "" {
+				workflows = append(workflows, filename)
+			}
 		}
 	}
 
